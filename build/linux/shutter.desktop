@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=shutter
+Exec=shutter
+Icon=shutter
+Categories=Development;
+Terminal=false
+Keywords=wails
+Version=1.0
+StartupNotify=false
