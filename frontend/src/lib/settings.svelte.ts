@@ -21,15 +21,16 @@ import {
 	Undo2,
 	X
 } from '@lucide/svelte';
-import { ScreenshotService } from '../../bindings/changeme';
 import { toolDefinitions, toolOrder } from '$lib/tools/registry';
 import type { SaveMode } from '$lib/save';
+import { LoadSettings, SaveSettings } from './wailsjs/go/main/ScreenshotService';
 
 export type SaveActionId = 'save' | 'saveAs' | 'copy' | 'saveCopy' | 'saveCopyAs' | 'cancel';
 
 export type SaveActionSetting = {
 	visible: boolean;
 	label: string;
+	smallBtn: boolean;
 	icon: string;
 };
 
@@ -97,24 +98,34 @@ export const saveIconLabels: Record<string, string> = {
 
 export const saveActionMeta: Record<
 	SaveActionId,
-	{ name: string; label: string; soloLabel?: string; icon: string; mode: SaveMode | null }
+	{
+		name: string;
+		label: string;
+		soloLabel?: string;
+		smallBtn: boolean;
+		icon: string;
+		mode: SaveMode | null;
+	}
 > = {
 	save: {
 		name: 'Save',
 		label: 'Save',
 		icon: 'save',
+		smallBtn: false,
 		mode: { destination: 'default', copy: false }
 	},
 	saveAs: {
 		name: 'Save as',
 		label: 'Save as',
 		icon: 'saveAll',
+		smallBtn: false,
 		mode: { destination: 'ask', copy: false }
 	},
 	copy: {
 		name: 'Copy',
 		label: 'Copy',
 		icon: 'clipboard',
+		smallBtn: false,
 		mode: { destination: 'none', copy: true }
 	},
 	saveCopy: {
@@ -122,6 +133,7 @@ export const saveActionMeta: Record<
 		label: 'Save & copy',
 		soloLabel: 'Done',
 		icon: 'clipboardCheck',
+		smallBtn: false,
 		mode: { destination: 'default', copy: true }
 	},
 	saveCopyAs: {
@@ -129,9 +141,10 @@ export const saveActionMeta: Record<
 		label: 'Save & copy as',
 		soloLabel: 'Done',
 		icon: 'clipboardPen',
+		smallBtn: false,
 		mode: { destination: 'ask', copy: true }
 	},
-	cancel: { name: 'Cancel', label: 'Cancel', icon: 'x', mode: null }
+	cancel: { name: 'Cancel', label: 'Cancel', icon: 'x', mode: null, smallBtn: true }
 };
 
 export function defaultSettings(): Settings {
@@ -146,7 +159,12 @@ export function defaultSettings(): Settings {
 		saveActions: Object.fromEntries(
 			saveActionIds.map((id) => [
 				id,
-				{ visible: true, label: '', icon: saveActionMeta[id].icon }
+				{
+					visible: true,
+					label: '',
+					icon: saveActionMeta[id].icon,
+					smallBtn: saveActionMeta[id].smallBtn
+				}
 			])
 		) as Record<SaveActionId, SaveActionSetting>
 	};
@@ -200,7 +218,7 @@ export const settings = $state<{ data: Settings; loaded: boolean }>({
 
 export async function loadSettings() {
 	try {
-		const raw = await ScreenshotService.LoadSettings();
+		const raw = await LoadSettings();
 		settings.data = normalizeSettings(raw ? JSON.parse(raw) : null);
 	} catch (err) {
 		console.error('load settings failed', err);
@@ -211,7 +229,7 @@ export async function loadSettings() {
 
 export async function storeSettings(next: Settings) {
 	const normalized = normalizeSettings(next);
-	await ScreenshotService.SaveSettings(JSON.stringify(normalized, null, 2));
+	await SaveSettings(JSON.stringify(normalized, null, 2));
 	settings.data = normalized;
 }
 
@@ -237,6 +255,13 @@ export function actionLabel(
 	const meta = saveActionMeta[id];
 	const solo = visibleSaveActions(actions).filter((other) => other !== 'cancel').length === 1;
 	return solo && meta.soloLabel ? meta.soloLabel : meta.label;
+}
+
+export function actionSmall(
+	id: SaveActionId,
+	actions: Record<SaveActionId, SaveActionSetting>
+): boolean {
+	return actions[id].smallBtn;
 }
 
 export function shortcutSaveAction(ask: boolean): SaveActionId | undefined {

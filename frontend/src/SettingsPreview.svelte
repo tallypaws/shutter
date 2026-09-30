@@ -29,6 +29,8 @@
 		g.font = '14px sans-serif';
 		g.fillText('The quick brown fox jumps over the lazy dog', 24, 100);
 		g.fillText('0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ', 24, 124);
+		g.font = '8px sans-serif';
+		g.fillText('miauu mrowerr morrrr purrr mroaw', 24, 140);
 		return c;
 	}
 
@@ -53,7 +55,11 @@
 			case 'pen': {
 				let el = createElement(id, { x: 40, y: 100 }, o);
 				if (!el) return null;
-				for (let i = 1; i <= 40; i++) {
+				let i = 1;
+				for (; i <= 20; i += 1) {
+					el = updateElementEnd(el, { x: 40 + i * 7, y: 85 + Math.sin(i / 3.5) * 38 });
+				}
+				for (; i <= 50; i += 4) {
 					el = updateElementEnd(el, { x: 40 + i * 7, y: 85 + Math.sin(i / 3.5) * 38 });
 				}
 				return el;

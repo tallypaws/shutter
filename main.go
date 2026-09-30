@@ -10,7 +10,10 @@ import (
 
 	"changeme/capture"
 
-	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v2"
+	"github.com/wailsapp/wails/v2/pkg/options"
+	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/linux"
 )
 
 //go:embed all:frontend/dist
@@ -38,32 +41,28 @@ func snapshotMiddleware(next http.Handler) http.Handler {
 				http.NotFound(w, r)
 				return
 			}
+
 			w.Header().Set("Content-Type", "image/png")
 			w.Header().Set("Cache-Control", "no-store")
+
 			http.ServeFile(w, r, editPath)
 			return
 		}
+
 		next.ServeHTTP(w, r)
 	})
 }
 
 func main() {
-	app := application.New(application.Options{
-		Name: "shutter",
-		Assets: application.AssetOptions{
-			Handler:    application.AssetFileServerFS(assets),
-			Middleware: snapshotMiddleware,
-		},
-		Services: []application.Service{
-			application.NewService(&ScreenshotService{}),
-		},
-		Windows: application.WindowsOptions{
-			AdditionalBrowserArgs: []string{"--disable-pinch"},
-		},
-	})
+	if capture.Requested {
+		if err := capture.Wait(); err != nil {
+			fmt.Fprintln(os.Stderr, "shutter: screenshot failed:", err)
+			os.Exit(1)
+		}
+	}
 
-	if err := capture.Wait(); err != nil {
-		fmt.Fprintln(os.Stderr, "shutter: screenshot failed:", err)
+	if err := os.Setenv("GDK_BACKEND", "x11"); err != nil {
+		fmt.Fprintln(os.Stderr, "shutter: failed to set GDK_BACKEND:", err)
 		os.Exit(1)
 	}
 
@@ -74,30 +73,41 @@ func main() {
 		width, height = 1000, 618
 	}
 
-	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:  "Shutter",
-		Width:  width,
-		Height: height,
-		Mac: application.MacWindow{
-			InvisibleTitleBarHeight: 50,
-			Backdrop:                application.MacBackdropTranslucent,
-			TitleBar:                application.MacTitleBarHiddenInset,
+	windowStartState := options.Normal
+	if editing {
+		windowStartState = options.Fullscreen
+	}
+
+	screenshotService := &ScreenshotService{}
+
+	err := wails.Run(&options.App{
+		Title:            "Shutter",
+		Width:            width,
+		Height:           height,
+		Frameless:        true,
+		WindowStartState: windowStartState,
+
+		BackgroundColour: options.NewRGBA(0, 0, 0, 0),
+
+		AssetServer: &assetserver.Options{
+			Assets:     assets,
+			Middleware: snapshotMiddleware,
 		},
-		URL:                "/",
-		Frameless:          true,
-		ZoomControlEnabled: false,
-		Windows:            application.WindowsWindow{},
-		BackgroundType:     application.BackgroundTypeTransparent,
-		Linux: application.LinuxWindow{
+
+		Bind: []interface{}{
+			screenshotService,
+		},
+
+		OnStartup: screenshotService.startup,
+
+		Linux: &linux.Options{
 			WindowIsTranslucent: true,
+			WebviewGpuPolicy:    linux.WebviewGpuPolicyAlways,
 		},
 	})
 
-	if editing {
-		window.Fullscreen()
-	}
-
-	if err := app.Run(); err != nil {
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "shutter:", err)
 		os.Exit(1)
 	}
 }

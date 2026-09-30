@@ -5,6 +5,7 @@
 	import { Settings as SettingsIcon } from '@lucide/svelte';
 	import {
 		actionLabel,
+		actionSmall,
 		saveActionIds,
 		saveIcons,
 		type SaveActionId,
@@ -34,20 +35,34 @@
 	)}
 >
 	{#each saves as id (id)}
-		{const Icon = saveIcons[actions[id].icon]}
-		<Button variant="secondary" title={actionLabel(id, actions)} onclick={() => onaction?.(id)}>
+		{const Icon = $derived(saveIcons[actions[id].icon])}
+		<Button
+			variant="secondary"
+			title={actionLabel(id, actions)}
+			onclick={() => onaction?.(id)}
+			size={actionSmall(id, actions) ? 'icon' : 'default'}
+		>
 			<Icon />
-			{actionLabel(id, actions)}
+			{#if !actionSmall(id, actions)}
+				{actionLabel(id, actions)}
+			{/if}
 		</Button>
 	{/each}
 	{#if showCancel}
 		{#if saves.length > 0}
 			<Separator orientation="vertical" class="my-2" />
 		{/if}
-		{const Icon = saveIcons[actions.cancel.icon]}
-		<Button variant="secondary" title={actionLabel('cancel', actions)} onclick={() => onaction?.('cancel')}>
+		{const Icon = $derived(saveIcons[actions.cancel.icon])}
+		<Button
+			variant="secondary"
+			title={actionLabel('cancel', actions)}
+			onclick={() => onaction?.('cancel')}
+			size={actionSmall('cancel', actions) ? 'icon' : 'default'}
+		>
 			<Icon />
-			{actionLabel('cancel', actions)}
+			{#if !actionSmall('cancel', actions)}
+				{actionLabel('cancel', actions)}
+			{/if}
 		</Button>
 	{/if}
 	{#if onsettings}

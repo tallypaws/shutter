@@ -1,0 +1,39 @@
+pkgname=shutter
+pkgver=0.1.0
+pkgrel=1
+
+pkgdesc='screenshot editor'
+arch=('x86_64')
+license=('MIT')
+
+depends=(
+	'gtk3'
+	'webkit2gtk-4.1'
+	'gpu-screen-recorder'
+)
+
+source=(
+	'shutter'
+	'shutter.desktop'
+	'shutter.png'
+)
+
+sha256sums=(
+	'SKIP'
+	'SKIP'
+	'SKIP'
+)
+
+package() {
+	install -Dm755 \
+		"$srcdir/shutter" \
+		"$pkgdir/usr/bin/shutter"
+
+	install -Dm644 \
+		"$srcdir/shutter.desktop" \
+		"$pkgdir/usr/share/applications/shutter.desktop"
+
+	install -Dm644 \
+		"$srcdir/shutter.png" \
+		"$pkgdir/usr/share/pixmaps/shutter.png"
+}

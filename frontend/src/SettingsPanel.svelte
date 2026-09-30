@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { Application, Window } from '@wailsio/runtime';
+	import { Quit } from '$lib/wailsjs/runtime/runtime';
+	import { WindowMinimise } from '$lib/wailsjs/runtime/runtime';
 	import { Minus, X } from '@lucide/svelte';
 	import { cn } from '$lib/utils';
 	import Button from '$lib/components/ui/button/button.svelte';
@@ -100,7 +101,9 @@
 	<div
 		class={cn(
 			'flex flex-col overflow-hidden bg-popover text-popover-foreground',
-			standalone ? 'h-full w-full outline rounded-4xl' : 'max-h-full w-190 max-w-full rounded-2xl outline'
+			standalone
+				? 'h-full w-full outline rounded-4xl'
+				: 'max-h-full w-190 max-w-full rounded-2xl outline'
 		)}
 	>
 		<div
@@ -133,7 +136,7 @@
 						variant="ghost"
 						title="Minimize"
 						aria-label="Minimize"
-						onclick={() => void Window.Minimise()}
+						onclick={() => void WindowMinimise()}
 					>
 						<Minus />
 					</Button>
@@ -143,7 +146,7 @@
 						title="Close"
 						aria-label="Close"
 						class="hover:bg-destructive/15 hover:text-destructive"
-						onclick={() => void Application.Quit()}
+						onclick={() => void Quit()}
 					>
 						<X />
 					</Button>
@@ -161,7 +164,7 @@
 							<Button
 								size="sm"
 								class="justify-start"
-								variant={tool === id ? 'default' : 'secondary'}
+								variant={tool === id ? 'default' : 'ghost'}
 								onclick={() => (tool = id)}
 							>
 								<def.icon />
@@ -170,7 +173,7 @@
 						{/each}
 					</div>
 					<div class="flex min-w-0 flex-1 flex-col gap-4">
-						<div class="flex flex-wrap items-center gap-3 rounded-xl px-3 py-2 outline">
+						<div class="flex flex-wrap items-center gap-3 rounded-xl px-2 py-2">
 							<OptionFields {fields} get={getOption} set={setOption} />
 						</div>
 						<SettingsPreview {tool} options={draft.tools[tool] ?? {}} />
@@ -183,7 +186,7 @@
 				</div>
 			{:else}
 				<div class="flex flex-col gap-4">
-					<div class="flex justify-center rounded-xl py-6 outline">
+					<div class="flex justify-center rounded-xl py-2">
 						<SaveBar actions={draft.saveActions} inert />
 					</div>
 					<label class="flex items-center gap-2 text-sm">
@@ -194,15 +197,26 @@
 						Close after saving or copying
 					</label>
 					<div class="flex flex-col gap-2">
-						{#each saveActionIds as id (id)}
-							{const Icon = saveIcons[draft.saveActions[id].icon]}
-							<div class="flex items-center gap-3 rounded-xl px-3 py-2 outline">
+						{#each saveActionIds as id, index (id)}
+							{const Icon = $derived(saveIcons[draft.saveActions[id].icon])}
+
+							{#if index !== 0}
+								<div class="px-6">
+									<Separator class="" />
+								</div>
+							{/if}
+
+							<div class="flex items-center gap-3 rounded-xl px-3 py-2">
 								<Checkbox
 									checked={draft.saveActions[id].visible}
 									disabled={locked(id)}
 									onCheckedChange={(v) => (draft.saveActions[id].visible = !!v)}
 								/>
 								<div class="w-36 text-sm">{saveActionMeta[id].name}</div>
+								<Checkbox
+									checked={!draft.saveActions[id].smallBtn}
+									onCheckedChange={(v) => (draft.saveActions[id].smallBtn = !v)}
+								/>
 								<Input
 									class="h-8 w-44"
 									maxlength={32}
@@ -222,7 +236,7 @@
 									</Select.Trigger>
 									<Select.Content class="max-h-72">
 										{#each iconItems as item (item.value)}
-											{const ItemIcon = saveIcons[item.value]}
+											{const ItemIcon = $derived(saveIcons[item.value])}
 											<Select.Item value={item.value} label={item.label}>
 												<ItemIcon class="size-4" />
 												{item.label}

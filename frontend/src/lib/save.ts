@@ -1,5 +1,9 @@
-import { Dialogs } from '@wailsio/runtime';
-import { ScreenshotService } from '../../bindings/changeme';
+import {
+	DefaultSavePath,
+	PickSavePath,
+	SaveImageTo,
+	SaveImage
+} from './wailsjs/go/main/ScreenshotService';
 
 export type SaveDestination = 'none' | 'default' | 'ask';
 
@@ -14,19 +18,12 @@ export type SaveOutcome = {
 };
 
 export async function pickSavePath(defaultPath: string): Promise<string> {
-	const cut = Math.max(defaultPath.lastIndexOf('/'), defaultPath.lastIndexOf('\\'));
 	try {
-		return await Dialogs.SaveFile({
-			Filename: defaultPath.slice(cut + 1),
-			Directory: cut > 0 ? defaultPath.slice(0, cut) : undefined,
-			Filters: [{ DisplayName: 'PNG image', Pattern: '*.png' }],
-			CanCreateDirectories: true
-		});
+		return await PickSavePath(defaultPath);
 	} catch {
 		return '';
 	}
 }
-
 export function copyPng(blob: Promise<Blob>): Promise<void> {
 	return navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
 }
@@ -50,9 +47,7 @@ export async function performSave(
 	}
 
 	const ask = destination === 'ask';
-	const chosen = ask
-		? ScreenshotService.DefaultSavePath().then(pickSavePath)
-		: Promise.resolve('');
+	const chosen = ask ? DefaultSavePath().then(pickSavePath) : Promise.resolve('');
 
 	const copied = copy
 		? copyPng(
@@ -72,9 +67,12 @@ export async function performSave(
 		return null;
 	}
 
-	const data = await blobToBase64(await blob);
-	const path = ask
-		? await ScreenshotService.SaveImageTo(target, data)
-		: await ScreenshotService.SaveImage(data);
+	const data = base64ToBytes(await blobToBase64(await blob));
+	const path = ask ? await SaveImageTo(target, data) : await SaveImage(data);
 	return { path, copied: await copied };
+}
+
+function base64ToBytes(base64: string): number[] {
+	const binary = atob(base64);
+	return Array.from(binary, (char) => char.charCodeAt(0));
 }

@@ -1,19 +1,19 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { ScreenshotService } from '../bindings/changeme';
 	import { ModeWatcher } from 'mode-watcher';
 	import './layout.css';
 	import Editor from './Editor.svelte';
 	import Tooltips from './Tooltips.svelte';
 	import SettingsPanel from './SettingsPanel.svelte';
 	import { loadSettings } from '$lib/settings.svelte';
+	import { HasSnapshot } from '$lib/wailsjs/go/main/ScreenshotService';
 	let canvas = $state<HTMLCanvasElement>();
 	let hasSnapshot = $state(false);
 	let ready = $state(false);
 
 	onMount(async () => {
 		await loadSettings();
-		hasSnapshot = await ScreenshotService.HasSnapshot();
+		hasSnapshot = await HasSnapshot();
 		ready = true;
 
 		if (!hasSnapshot) return;

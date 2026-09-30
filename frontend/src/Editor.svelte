@@ -1,10 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { ScreenshotService } from '../bindings/changeme';
 	import { draw, fade, fly, scale } from 'svelte/transition';
 	import Button from '$lib/components/ui/button/button.svelte';
 	import { cn } from 'cn';
-	import { Application } from '@wailsio/runtime';
+	import { Quit } from '$lib/wailsjs/runtime/runtime';
 	import { clamp } from '@tally.paws/toolbox';
 	import { mouseMoveListeners, mouseUpListeners } from './dragstate';
 	import { get } from 'svelte/store';
@@ -61,6 +60,7 @@
 	import { pickImageFiles, registerImage } from '$lib/render/images';
 	import { performSave, type SaveMode } from '$lib/save';
 	import { fontEpoch } from '$lib/fontEpoch.svelte';
+	import { HasSnapshot } from '$lib/wailsjs/go/main/ScreenshotService';
 
 	const cropFadeOut = 0.6;
 
@@ -79,7 +79,7 @@
 	let statusTimer: ReturnType<typeof setTimeout> | undefined;
 
 	onMount(async () => {
-		if (!(await ScreenshotService.HasSnapshot())) return;
+		if (!(await HasSnapshot())) return;
 
 		imageUrl = `/shutter/snapshot.png?t=${Date.now()}`;
 
@@ -170,10 +170,10 @@
 	async function runAction(id: SaveActionId) {
 		const mode = saveActionMeta[id].mode;
 		if (!mode) {
-			void Application.Quit();
+			void Quit();
 			return;
 		}
-		if ((await runSave(mode)) && settings.data.closeAfterSave) void Application.Quit();
+		if ((await runSave(mode)) && settings.data.closeAfterSave) void Quit();
 	}
 
 	function pointerToImage(event: MouseEvent) {

@@ -1,13 +1,8 @@
-// Package capture starts the screenshot as early as possible during process
-// startup, before Wails/GTK/WebKit are initialised.
-//
-// Go runs package init functions ordered by import path once a package's own
-// imports are ready. This package only imports the standard library and sorts
-// before github.com/..., so its init runs ahead of everything heavy. Keep it
-// that way: don't import anything else here.
 package capture
 
 import (
+	"errors"
+	"image/png"
 	"os"
 	"os/exec"
 	"strconv"
@@ -17,10 +12,8 @@ import (
 const screen = "eDP-1"
 
 var (
-	// Requested reports whether --screenshot was passed.
 	Requested bool
-	// Path is where the screenshot is written (only set when Requested).
-	Path string
+	Path      string
 
 	done chan error
 )
@@ -32,31 +25,67 @@ func init() {
 			break
 		}
 	}
+
 	if !Requested {
 		return
 	}
 
-	Path = "/tmp/shutter-" + strconv.Itoa(os.Getpid()) + "-" + strconv.FormatInt(time.Now().UnixNano(), 36) + ".png"
+	Path = "/tmp/shutter-" +
+		strconv.Itoa(os.Getpid()) + "-" +
+		strconv.FormatInt(time.Now().UnixNano(), 36) +
+		".png"
 
 	done = make(chan error, 1)
+
 	cmd := exec.Command("gpu-screen-recorder", "-w", screen, "-o", Path)
 	cmd.Stderr = os.Stderr
+
 	if err := cmd.Start(); err != nil {
 		done <- err
 		return
 	}
-	go func() { done <- cmd.Wait() }()
+
+	go func() {
+		done <- cmd.Wait()
+	}()
 }
 
-// Wait blocks until the screenshot has been written (or failed).
-// It returns nil immediately when --screenshot wasn't requested.
 func Wait() error {
 	if done == nil {
 		return nil
 	}
+
 	if err := <-done; err != nil {
 		return err
 	}
-	_, err := os.Stat(Path)
-	return err
+
+	deadline := time.Now().Add(2 * time.Second)
+
+	for {
+		err := checkPNG(Path)
+		if err == nil {
+			return nil
+		}
+
+		if time.Now().After(deadline) {
+			return err
+		}
+
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func checkPNG(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	_, err = png.Decode(file)
+	if err != nil {
+		return errors.New("screenshot PNG is not ready: " + err.Error())
+	}
+	println("png ready")
+	return nil
 }

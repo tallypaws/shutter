@@ -14,7 +14,6 @@
   },
   "dependencies": {
     "@tally.paws/toolbox": "^1.2.1",
-    "@wailsio/runtime": "latest",
     "mode-watcher": "^1.1.0",
     "uuid": "^14.0.2"
   },
