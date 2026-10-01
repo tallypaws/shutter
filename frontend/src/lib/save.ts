@@ -24,8 +24,11 @@ export async function pickSavePath(defaultPath: string): Promise<string> {
 		return '';
 	}
 }
-export function copyPng(blob: Promise<Blob>): Promise<void> {
-	return navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+
+export async function copyPng(blob: Blob): Promise<void> {
+	await navigator.clipboard.write([
+		new ClipboardItem({ 'image/png': blob })
+	]);
 }
 
 export function blobToBase64(blob: Blob): Promise<string> {
@@ -36,40 +39,49 @@ export function blobToBase64(blob: Blob): Promise<string> {
 		reader.readAsDataURL(blob);
 	});
 }
-
 export async function performSave(
 	blob: Promise<Blob>,
 	{ destination, copy }: SaveMode
 ): Promise<SaveOutcome | null> {
 	if (destination === 'none') {
-		await copyPng(blob);
+		const image = await blob;
+		await copyPng(image);
 		return { path: null, copied: true };
 	}
 
 	const ask = destination === 'ask';
-	const chosen = ask ? DefaultSavePath().then(pickSavePath) : Promise.resolve('');
 
-	const copied = copy
-		? copyPng(
-				chosen.then((path) => {
-					if (ask && !path) throw new Error('cancelled');
-					return blob;
-				})
-			).then(
+	const chosen = ask
+		? DefaultSavePath().then(pickSavePath)
+		: Promise.resolve('');
+
+	const target = await chosen;
+
+	if (ask && !target) {
+		return null;
+	}
+
+	const image = await blob;
+
+	const data = base64ToBytes(await blobToBase64(image));
+
+	const copyPromise = copy
+		? copyPng(image).then(
 				() => true,
 				() => false
 			)
 		: Promise.resolve(false);
 
-	const target = await chosen;
-	if (ask && !target) {
-		await copied;
-		return null;
-	}
+	const savePromise = ask
+		? SaveImageTo(target, data)
+		: SaveImage(data);
 
-	const data = base64ToBytes(await blobToBase64(await blob));
-	const path = ask ? await SaveImageTo(target, data) : await SaveImage(data);
-	return { path, copied: await copied };
+	const [path, copied] = await Promise.all([
+		savePromise,
+		copyPromise
+	]);
+
+	return { path, copied };
 }
 
 function base64ToBytes(base64: string): number[] {

@@ -3,7 +3,7 @@
 	import { draw, fade, fly, scale } from 'svelte/transition';
 	import Button from '$lib/components/ui/button/button.svelte';
 	import { cn } from 'cn';
-	import { Quit } from '$lib/wailsjs/runtime/runtime';
+	import { Quit, WindowHide, WindowMinimise } from '$lib/wailsjs/runtime/runtime';
 	import { clamp } from '@tally.paws/toolbox';
 	import { mouseMoveListeners, mouseUpListeners } from './dragstate';
 	import { get } from 'svelte/store';
@@ -173,7 +173,47 @@
 			void Quit();
 			return;
 		}
-		if ((await runSave(mode)) && settings.data.closeAfterSave) void Quit();
+		if ((await runSave(mode)) && settings.data.closeAfterSave) {
+			WindowHide();
+
+			for (let i = 0; i < 40; i++) {
+				if (await clipboardHasValidPng()) {
+					Quit();
+					return;
+				}
+
+				await new Promise((resolve) => setTimeout(resolve, 50));
+			}
+
+			console.error('Clipboard verification timed out');
+			Quit();
+		}
+	}
+
+	async function clipboardHasValidPng(): Promise<boolean> {
+		try {
+			const items = await navigator.clipboard.read();
+
+			for (const item of items) {
+				if (!item.types.includes('image/png')) continue;
+
+				const blob = await item.getType('image/png');
+
+				if (blob.size === 0) continue;
+
+				const bitmap = await createImageBitmap(blob);
+
+				const valid = bitmap.width > 0 && bitmap.height > 0;
+
+				bitmap.close();
+
+				if (valid) return true;
+			}
+		} catch (err) {
+			console.error('Clipboard verification failed:', err);
+		}
+
+		return false;
 	}
 
 	function pointerToImage(event: MouseEvent) {
