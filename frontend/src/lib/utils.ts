@@ -1,3 +1,4 @@
+import { get, writable } from 'svelte/store';
 import type { Box, Rect } from './tools/types';
 
 export { cn } from 'cn';
@@ -52,9 +53,6 @@ export function toDegrees(radians: number): number {
 
 export const getDistance2D = (x1: number, y1: number, x2: number, y2: number) =>
 	Math.hypot(x2 - x1, y2 - y1);
-
-
-
 
 export function normalizeBox(box: Box): Box;
 export function normalizeBox(x1: number, y1: number, x2: number, y2: number): Box;
@@ -142,3 +140,11 @@ export function rectToBox(arg1: number | Rect, y?: number, width?: number, heigh
 	};
 }
 
+function withProps<F extends (...args: any[]) => any, P extends object>(fn: F, props: P): F & P {
+	return Object.assign(fn, props);
+}
+
+const _mousexwritable = writable(0);
+const _mouseywritable = writable(0);
+export const mouseX = withProps(() => get(_mousexwritable), _mousexwritable);
+export const mouseY = withProps(() => get(_mouseywritable), _mouseywritable);

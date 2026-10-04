@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { draw, fade, fly, scale } from 'svelte/transition';
-	import Button from '$lib/components/ui/button/button.svelte';
+	import Button, { buttonVariants } from '$lib/components/ui/button/button.svelte';
 	import { cn } from 'cn';
 	import { Quit, WindowHide, WindowMinimise } from '$lib/wailsjs/runtime/runtime';
 	import { clamp } from '@tally.paws/toolbox';
@@ -13,6 +13,7 @@
 	import type {
 		AnyElement,
 		ElementDrag,
+		ImageElement,
 		Rect,
 		TextElement,
 		ToolId,
@@ -33,7 +34,7 @@
 		rotationTransform,
 		updateElementEnd
 	} from '$lib/tools/elements';
-	import { boxToRect, getAngleDegrees, normalizeBox } from '$lib/utils';
+	import { boxToRect, getAngleDegrees, mouseX, mouseY, normalizeBox } from '$lib/utils';
 	import HandleShape from './HandleShape.svelte';
 	import { smoothPath } from '$lib/tools/smooth';
 	import {
@@ -57,10 +58,12 @@
 	} from '$lib/settings.svelte';
 	import { ensureFonts, exportPng, getSceneContext } from '$lib/render/scene';
 	import { LayerRenderer } from '$lib/render/layers';
-	import { pickImageFiles, registerImage } from '$lib/render/images';
+	import { getImage, pickImageFiles, registerImage } from '$lib/render/images';
 	import { performSave, type SaveMode } from '$lib/save';
 	import { fontEpoch } from '$lib/fontEpoch.svelte';
 	import { HasSnapshot } from '$lib/wailsjs/go/main/ScreenshotService';
+	import ImageBitmapImg from './ImageBitmapImg.svelte';
+	import { Badge } from '$lib/components/ui/badge';
 
 	const cropFadeOut = 0.6;
 
@@ -216,7 +219,7 @@
 		return false;
 	}
 
-	function pointerToImage(event: MouseEvent) {
+	function pointerToImage(event: { clientX: number; clientY: number }) {
 		if (!svg) throw new Error('SVG not mounted');
 
 		const point = new DOMPoint(event.clientX, event.clientY);
@@ -538,22 +541,159 @@
 		}
 	}
 
+	const pendingImages: ImageElement[] = $state([]);
+
+	async function placeImage() {
+		const image = pendingImages.shift();
+		if (!image) return;
+		pushHistory(snapshotElements());
+
+		const { x, y } = pointerToImage({ clientX: mouseX(), clientY: mouseY() });
+
+		const width = image.x2 - image.x1;
+		const height = image.y2 - image.y1;
+
+		image.x1 = x;
+		image.y1 = y;
+		image.x2 = x + width;
+		image.y2 = y + height;
+
+		const index = elements.findIndex((e) => e.id === image.id);
+		elements[index] = image;
+		if (pendingImages.length === 0) activeTool = 'select';
+	}
+
+	async function addImage(src: ImageBitmapSource) {
+		if (!crop) return;
+		const added: ImageElement[] = [];
+		const area = { x: 0, y: 0, width: sourceWidth, height: sourceHeight };
+
+		try {
+			const bitmap = await createImageBitmap(src);
+			added.push(
+				createImageElement(
+					registerImage(bitmap),
+					bitmap,
+					{ x: -bitmap.width / 2, y: -bitmap.height / 2 },
+					area
+				)
+			);
+		} catch {}
+
+		elements.push(...added);
+		pendingImages.push(...added);
+		activeTool = 'image';
+	}
+
+	window.addEventListener('paste', async (event) => {
+		const items = event.clipboardData?.items;
+		if (!items) return;
+
+		let handledImage = false;
+
+		for (const item of items) {
+			console.log(item.kind, item.type);
+
+			if (item.kind === 'file' && item.type.startsWith('image/')) {
+				const blob = item.getAsFile();
+				if (blob) {
+					addImage(blob);
+					handledImage = true;
+					break;
+				}
+			}
+		}
+
+		if (handledImage) return;
+
+		for (const item of items) {
+			if (item.type === 'text/html') {
+				const html = await new Promise<string>((resolve) => {
+					item.getAsString(resolve);
+				});
+
+				const doc = new DOMParser().parseFromString(html, 'text/html');
+				const img = doc.querySelector('img');
+
+				if (img?.src) {
+					try {
+						const response = await fetch(img.src);
+						if (!response.ok) continue;
+
+						const blob = await response.blob();
+
+						if (blob.type.startsWith('image/')) {
+							addImage(blob);
+							handledImage = true;
+							break;
+						}
+					} catch (error) {
+						console.error('Failed to fetch pasted image:', error);
+					}
+				}
+			}
+		}
+
+		if (handledImage) return;
+
+		for (const item of items) {
+			if (item.type === 'text/uri-list') {
+				const uri = await new Promise<string>((resolve) => {
+					item.getAsString(resolve);
+				});
+
+				const url = uri.split(/\r?\n/).find((line) => line && !line.startsWith('#'));
+
+				if (!url) continue;
+
+				try {
+					const response = await fetch(url);
+					if (!response.ok) continue;
+
+					const blob = await response.blob();
+
+					if (blob.type.startsWith('image/')) {
+						addImage(blob);
+						break;
+					}
+				} catch (error) {
+					console.error('Failed to fetch pasted image URL:', error);
+				}
+			}
+		}
+	});
 	async function importImages() {
 		endEditing();
 		const files = await pickImageFiles();
-		if (!files.length || !sourceWidth || !sourceHeight) return;
+		if (!files.length || !sourceWidth || !sourceHeight) {
+			activeTool = 'select';
+			return;
+		}
 
-		const area = crop ?? { x: 0, y: 0, width: sourceWidth, height: sourceHeight };
-		const added: AnyElement[] = [];
+		// const added: ImageElement[] = [];
+		// for (const file of files) {
+		// 	try {
+		// 		addImage(file);
+		// 	} catch {
+		// 		flash(`Could not open ${file.name}`);
+		// 	}
+		// }
+		// if (!added.length) return;
+
+		// // elements.push(...added);
+		// pendingImages.push(...added);
+		// // selectedElementId = added[added.length - 1].id;
+
+		const area = { x: 0, y: 0, width: sourceWidth, height: sourceHeight };
+		const added: ImageElement[] = [];
 		for (const file of files) {
 			try {
 				const bitmap = await createImageBitmap(file);
-				const step = added.length * 24;
 				added.push(
 					createImageElement(
 						registerImage(bitmap),
 						bitmap,
-						{ x: area.x + area.width / 2 + step, y: area.y + area.height / 2 + step },
+						{ x: -bitmap.width / 2, y: -bitmap.height / 2 },
 						area
 					)
 				);
@@ -563,17 +703,26 @@
 		}
 		if (!added.length) return;
 
-		pushHistory(snapshotElements());
 		elements.push(...added);
-		selectTool('select');
-		selectedElementId = added[added.length - 1].id;
+		pendingImages.push(...added);
 	}
 
 	function selectTool(id: ToolId) {
 		if (id === 'image') {
+			activeTool = id;
+
 			void importImages();
 			return;
+		} else {
+			while (pendingImages.length) {
+				const img = pendingImages.shift();
+				if (!img) continue;
+				getImage(img.assetId!)?.close();
+				const index = elements.findIndex((e) => e.id === img.id);
+				elements.splice(index);
+			}
 		}
+
 		endEditing();
 		if (id === activeTool || !toolDefinitions[id].implemented) return;
 		commitDragHistory();
@@ -725,6 +874,12 @@
 			handleSelectPointerDown(point, event);
 			return;
 		}
+
+		if (activeTool === 'image') {
+			placeImage();
+			return;
+		}
+
 		if (activeTool === 'text') {
 			handleTextPointerDown(point);
 			return;
@@ -735,6 +890,8 @@
 	}
 
 	function runMoveCB(event: PointerEvent) {
+		mouseY.set(event.clientY);
+		mouseX.set(event.clientX);
 		Object.entries(get(mouseMoveListeners)).forEach(([id, cb]) => {
 			const point = pointerToImage(event);
 
@@ -836,6 +993,11 @@
 				magnifierPoint = point;
 			}
 
+			return;
+		}
+
+		if (activeTool === 'image') {
+			if (!cursorOverride) cursor = 'crosshair';
 			return;
 		}
 
@@ -969,13 +1131,13 @@
 	// svelte-ignore non_reactive_update
 	let container: HTMLDivElement;
 
-	function toscreenx(sourceX: number) {
+	function toScreenX(sourceX: number) {
 		if (!container) throw new Error('container is undefined');
 		const scale = container.clientWidth / sourceWidth;
 		return sourceX * scale;
 	}
 
-	function toscreeny(sourceY: number) {
+	function toScreenY(sourceY: number) {
 		if (!container) throw new Error('container is undefined');
 		const scale = container.clientHeight / sourceHeight;
 		return sourceY * scale;
@@ -1028,6 +1190,102 @@
 		const hit = hitText(pointerToImage(event));
 		if (hit) beginEditing(hit.id);
 	}
+
+	// idea from rayne sorry your ui is too good i have to steal it
+
+	const hlPadding = 8;
+	const hlButtonSize = 32;
+	const hlGap = 4;
+
+	const hlStiffness = 620;
+	const hlDamping = 50;
+	const hlStretchAmount = 0.00002;
+	const hlMaxStretch = 0.45;
+	const hlMaxSquash = 0.3;
+	const hlVolume = 0.95;
+	const hlScaleSmoothing = 35;
+	const hlRestEpsilon = 0.05;
+	const hlSubstep = 1 / 240;
+
+	function hlTarget() {
+		const i = toolOrder.findIndex((e) => e === activeTool);
+		return hlPadding + i * (hlButtonSize + hlGap);
+	}
+
+	let hlX = $state(hlTarget());
+	let hlSX = $state(1);
+	let hlSY = $state(1);
+	let hlVel = 0;
+	let hlRaf: number | null = null;
+	let hlLast = 0;
+
+	function hlTick(now: number) {
+		hlRaf = null;
+
+		const frameDt = hlLast ? Math.min((now - hlLast) / 1000, 0.05) : 0;
+		hlLast = now;
+
+		const target = hlTarget();
+		let accelAlong = 0;
+
+		let remaining = frameDt;
+		while (remaining > 0) {
+			const dt = Math.min(hlSubstep, remaining);
+			remaining -= dt;
+
+			const accel = hlStiffness * (target - hlX) - hlDamping * hlVel;
+			hlVel += accel * dt;
+			hlX += hlVel * dt;
+
+			const dir = Math.abs(hlVel) > 1 ? Math.sign(hlVel) : Math.sign(target - hlX);
+			accelAlong = accel * dir;
+		}
+
+		if (frameDt > 0) {
+			const sTarget = Math.min(
+				1 + hlMaxStretch,
+				Math.max(1 - hlMaxSquash, 1 + accelAlong * hlStretchAmount)
+			);
+			const t = 1 - Math.exp(-hlScaleSmoothing * frameDt);
+			hlSX += (sTarget - hlSX) * t;
+			hlSY = Math.pow(hlSX, -hlVolume);
+		}
+
+		const settled =
+			Math.abs(target - hlX) < hlRestEpsilon &&
+			Math.abs(hlVel) < hlRestEpsilon &&
+			Math.abs(hlSX - 1) < 0.002;
+
+		if (settled) {
+			hlX = target;
+			hlVel = 0;
+			hlSX = 1;
+			hlSY = 1;
+			hlLast = 0;
+			return;
+		}
+
+		hlRaf = requestAnimationFrame(hlTick);
+	}
+
+	$effect(() => {
+		activeTool;
+		hlTarget();
+		if (hlRaf === null) {
+			hlLast = 0;
+			hlRaf = requestAnimationFrame(hlTick);
+		}
+	});
+
+	const stackOffsetX = 0;
+	const stackOffsetY = 0;
+	const stackShrink = 0.06;
+	const stackFade = 0.06;
+	const stackMinOpacity = 0.35;
+	const stackMoveMs = 250;
+	const stackEase = 'cubic-bezier(0.34, 1.4, 0.64, 1)';
+	const stackPlaceDistance = 48;
+	const stackPlaceMs = 200;
 </script>
 
 <svelte:window onkeydown={handleKeyDown} />
@@ -1039,6 +1297,49 @@
 	onpointermove={runMoveCB}
 	onpointerup={runUpCB}
 >
+	<!-- <div class="absolute pointer-events-none" style="top: {$mouseY}px; left: {$mouseX}px;">
+		{#if pendingImages[0]}
+			{const image = $derived(getImage(pendingImages[0].assetId))}
+
+			<div
+				class="max-w-25 p-2 bg-popover/40 backdrop-blur-lg rounded-lg outline-2 flex justify-center items-center relative mt-3 ml-3"
+			>
+				<Badge class="absolute top-0 left-full -translate-x-1/2 -translate-y-1/2">
+					{pendingImages.length}
+				</Badge>
+				<ImageBitmapImg bitmap={image} class="rounded-md max-h-25 max-w-25" />
+			</div>
+		{/if}
+	</div> -->
+	<div class="absolute pointer-events-none" style="top: {$mouseY}px; left: {$mouseX}px;">
+		{#each pendingImages as image, i (image.id)}
+			{const bitmap = $derived(getImage(image.assetId))}
+
+			<div
+				class="absolute top-0 left-0 mt-3 ml-3"
+				style="
+				z-index: {pendingImages.length - i};
+				transform: translate({i * stackOffsetX}px, {i * stackOffsetY}px) scale({1 - i * stackShrink});
+				transform-origin: top left;
+				opacity: {Math.max(stackMinOpacity, 1 - i * stackFade)};
+				transition: transform {stackMoveMs}ms {stackEase}, opacity {stackMoveMs}ms ease-out;
+			"
+			>
+				<div
+					class="w-25 p-2 bg-popover rounded-lg outline-2 flex justify-center items-center relative"
+					in:fade={{ duration: 150 }}
+					out:fly={{ y: stackPlaceDistance, duration: stackPlaceMs, opacity: 0 }}
+				>
+					{#if i === 0 && pendingImages.length !== 1}
+						<Badge class="absolute top-0 left-full -translate-x-1/2 -translate-y-1/2">
+							{pendingImages.length}
+						</Badge>
+					{/if}
+					<ImageBitmapImg {bitmap} class="rounded-md max-h-25 max-w-25" />
+				</div>
+			</div>
+		{/each}
+	</div>
 	<!-- <div class={cn('absolute pointer-events-none select-none', cursorOverride && 'text-red-400')}>
 		<pre>{cursor || 'null'}
 			{JSON.stringify(elements, null, 2)}
@@ -1280,12 +1581,12 @@
 		{const buffer = 15}
 		{let x = $derived(
 			clamp(
-				toscreeny(crop.x + crop.width / 2),
+				toScreenY(crop.x + crop.width / 2),
 				toolbarDiv?.clientWidth / 2 + buffer,
 				container.clientWidth - toolbarDiv?.clientWidth / 2 - buffer
 			)
 		)}
-		{let y = $derived(toscreenx(crop.y + crop.height + (nearBottom ? -60 : 15)))}
+		{let y = $derived(toScreenX(crop.y + crop.height + (nearBottom ? -60 : 15)))}
 		<div
 			class={cn(
 				'h-10 bg-popover px-2 py-3 absolute -translate-x-1/2',
@@ -1323,11 +1624,20 @@
 					}
 				/>
 			</div>
+			<div
+				class={buttonVariants({
+					size: 'icon',
+					variant: 'default',
+					class: 'pointer-events-none absolute -z-10 transition-none'
+				})}
+				style="left: 0; transform: translateX({hlX}px) scale({hlSX}, {hlSY}); will-change: transform;"
+			></div>
 			{#each toolOrder as toolId (toolId)}
 				{const def = toolDefinitions[toolId]}
 				<Button
 					variant={activeTool === toolId ? 'default' : 'secondary'}
 					size="icon"
+					class="bg-transparent "
 					disabled={!def.implemented}
 					title={def.label}
 					onclick={() => selectTool(toolId)}
@@ -1363,9 +1673,7 @@
 			{/key}
 		{/if}
 	{/if}
-	{#if settingsOpen}
-		<SettingsPanel onclose={() => (settingsOpen = false)} />
-	{/if}
+	<SettingsPanel onclose={() => (settingsOpen = false)} open={settingsOpen} />
 </div>
 
 <style>
