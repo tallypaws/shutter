@@ -1,3 +1,4 @@
+import { settings } from './settings.svelte';
 import {
 	DefaultSavePath,
 	PickSavePath,
@@ -53,7 +54,7 @@ export async function performSave(
 
 	const chosen = ask
 		? DefaultSavePath().then(pickSavePath)
-		: Promise.resolve('');
+		: Promise.resolve(settings.data.saveDir);
 
 	const target = await chosen;
 

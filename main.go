@@ -19,6 +19,9 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+//go:embed packaging/linux/shutter.png
+var appIcon []byte
+
 var editPath string
 
 func init() {
@@ -81,7 +84,8 @@ func main() {
 	screenshotService := &ScreenshotService{}
 
 	err := wails.Run(&options.App{
-		Title:            "Shutter",
+		Title: "Shutter",
+
 		Width:            width,
 		Height:           height,
 		Frameless:        true,
@@ -103,6 +107,7 @@ func main() {
 		Linux: &linux.Options{
 			WindowIsTranslucent: true,
 			WebviewGpuPolicy:    linux.WebviewGpuPolicyAlways,
+			Icon:                appIcon,
 		},
 	})
 

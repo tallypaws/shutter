@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Quit } from '$lib/wailsjs/runtime/runtime';
 	import { WindowMinimise } from '$lib/wailsjs/runtime/runtime';
-	import { Minus, X } from '@lucide/svelte';
+	import { FolderSearchIcon, Minus, X } from '@lucide/svelte';
 	import { cn } from '$lib/utils';
 	import Button from '$lib/components/ui/button/button.svelte';
 	import { Input } from '$lib/components/ui/input';
@@ -25,6 +25,7 @@
 		type SaveActionId,
 		type Settings
 	} from '$lib/settings.svelte';
+	import { PickFolderPath } from '$lib/wailsjs/go/main/ScreenshotService';
 
 	let { onclose }: { onclose?: () => void } = $props();
 
@@ -126,7 +127,7 @@
 					variant={section === 'save' ? 'default' : 'secondary'}
 					onclick={() => (section = 'save')}
 				>
-					Save buttons
+					Save options
 				</Button>
 			</div>
 			{#if standalone}
@@ -186,7 +187,7 @@
 				</div>
 			{:else}
 				<div class="flex flex-col gap-4">
-					<div class="flex justify-center rounded-xl py-2">
+					<div class="flex justify-center rounded-xl py-1">
 						<SaveBar actions={draft.saveActions} inert />
 					</div>
 					<label class="flex items-center gap-2 text-sm">
@@ -196,7 +197,7 @@
 						/>
 						Close after saving or copying
 					</label>
-					<div class="flex flex-col gap-2">
+					<div class="flex flex-col gap-1">
 						{#each saveActionIds as id, index (id)}
 							{const Icon = $derived(saveIcons[draft.saveActions[id].icon])}
 
@@ -246,6 +247,19 @@
 								</Select.Root>
 							</div>
 						{/each}
+					</div>
+					<div class="flex flex-row items-center gap-2">
+						<span class="whitespace-nowrap shrink-0">Save Location</span>
+						<Input class="shrink" bind:value={draft.saveDir} />
+						<Button
+							onclick={async () => {
+								const newDir = await PickFolderPath(draft.saveDir);
+								if (newDir) draft.saveDir = newDir;
+							}}
+							size="icon"
+						>
+							<FolderSearchIcon />
+						</Button>
 					</div>
 				</div>
 			{/if}

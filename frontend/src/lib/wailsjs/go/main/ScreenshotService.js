@@ -18,6 +18,10 @@ export function LoadSettings() {
   return window['go']['main']['ScreenshotService']['LoadSettings']();
 }
 
+export function PickFolderPath(arg1) {
+  return window['go']['main']['ScreenshotService']['PickFolderPath'](arg1);
+}
+
 export function PickSavePath(arg1) {
   return window['go']['main']['ScreenshotService']['PickSavePath'](arg1);
 }

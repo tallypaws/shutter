@@ -39,6 +39,7 @@ export type Settings = {
 	closeAfterSave: boolean;
 	tools: Record<string, Record<string, unknown>>;
 	saveActions: Record<SaveActionId, SaveActionSetting>;
+	saveDir: string;
 };
 
 export const saveActionIds: SaveActionId[] = [
@@ -167,6 +168,8 @@ export function defaultSettings(): Settings {
 				}
 			])
 		) as Record<SaveActionId, SaveActionSetting>
+		,
+		saveDir: "~"
 	};
 }
 

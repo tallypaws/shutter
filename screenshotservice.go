@@ -97,6 +97,20 @@ func (s *ScreenshotService) PickSavePath(defaultPath string) (string, error) {
 	})
 }
 
+func (s *ScreenshotService) PickFolderPath(defaultPath string) (string, error) {
+	if s.ctx == nil {
+		return "", errors.New("Wails runtime is not initialized")
+	}
+
+	directory := filepath.Dir(defaultPath)
+
+	return runtime.OpenDirectoryDialog(s.ctx, runtime.OpenDialogOptions{
+		DefaultDirectory:     directory,
+		Title:                "Default save path",
+		CanCreateDirectories: true,
+	})
+}
+
 func settingsPath() (string, error) {
 	dir, err := os.UserConfigDir()
 	if err != nil {

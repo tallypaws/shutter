@@ -9,6 +9,8 @@ export function ListFonts():Promise<Array<string>>;
 
 export function LoadSettings():Promise<string>;
 
+export function PickFolderPath(arg1:string):Promise<string>;
+
 export function PickSavePath(arg1:string):Promise<string>;
 
 export function SaveImage(arg1:Array<number>):Promise<string>;
