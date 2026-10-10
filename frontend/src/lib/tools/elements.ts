@@ -2,6 +2,7 @@ import { v7 as uuid } from 'uuid';
 import type {
 	AnyElement,
 	CircleElement,
+	DrawElement,
 	ElementHandle,
 	RectElement,
 	TextElement,
@@ -30,6 +31,7 @@ import {
 	HitPadding,
 	LineDefault,
 	PenDefault,
+	HighlighterDefault,
 	RectDefault,
 	RotateHandleOffset,
 	SnapRotationStep,
@@ -159,6 +161,20 @@ export function createElement(
 				rotation: 0
 			};
 		}
+		case 'highlighter': {
+			const o = withDefaults(HighlighterDefault, options);
+			return {
+				id: uuid(),
+				type: 'draw',
+				points: [point],
+				color: o.color,
+				thickness: o.thickness,
+				smoothing: o.smoothing,
+				rotation: 0,
+				opacity: o.opacity,
+				highlighter: true
+			};
+		}
 		case 'text': {
 			const o = withDefaults(TextDefault, options);
 			return {
@@ -200,6 +216,7 @@ export function createElement(
 		case 'crop':
 		case 'select':
 		case 'image':
+		case 'clone':
 			return null;
 		default:
 			return assertNever(tool);
@@ -227,11 +244,25 @@ export function createImageElement(
 	};
 }
 
+export function createImageElementAt(assetId: string, area: Rect): ImageElement {
+	return {
+		id: uuid(),
+		type: 'image',
+		assetId,
+		x1: area.x,
+		y1: area.y,
+		x2: area.x + area.width,
+		y2: area.y + area.height,
+		rotation: 0
+	};
+}
+
 export function updateElementEnd(
 	el: AnyElement,
 	point: Point,
 	modifiers: ToolModifiers = noModifiers,
-	origin: Point = point
+	origin: Point = point,
+	minDistance = 0
 ): AnyElement {
 	switch (el.type) {
 		case 'line':
@@ -273,7 +304,14 @@ export function updateElementEnd(
 			};
 		}
 		case 'draw': {
-			el.points.push(point);
+			const pts = el.points;
+			const n = pts.length;
+			const tail =
+				minDistance > 0 &&
+				n >= 2 &&
+				getDistance2D(pts[n - 2].x, pts[n - 2].y, pts[n - 1].x, pts[n - 1].y) < minDistance;
+			if (tail) pts[n - 1] = point;
+			else pts.push(point);
 			return el;
 		}
 		case 'blur':
@@ -336,11 +374,12 @@ export function hitTestElement(mousePoint: Point, el: AnyElement): boolean {
 			return (q.x / rx) ** 2 + (q.y / ry) ** 2 <= 1;
 		}
 		case 'draw': {
+			const q = el.rotation ? toLocalDraw(el, mousePoint) : mousePoint;
 			let lastPoint: Point | null = null;
 			for (const elPoint of el.points) {
 				const distance = lastPoint
-					? distanceToSegment(mousePoint, elPoint, lastPoint)
-					: getDistance2D(mousePoint.x, mousePoint.y, elPoint.x, elPoint.y);
+					? distanceToSegment(q, elPoint, lastPoint)
+					: getDistance2D(q.x, q.y, elPoint.x, elPoint.y);
 				if (distance <= el.thickness / 2 + HitPadding) return true;
 				lastPoint = elPoint;
 			}
@@ -578,24 +617,11 @@ export function getElementHandles(el: AnyElement): ElementHandle[] {
 			];
 		}
 		case 'draw': {
-			const rotation = el.rotation;
-			const bounds = getElementBounds(el);
-			const box = rectToBox(bounds);
-			const at = (
-				id: string,
-				kind: ElementHandle['kind'],
-				lx: number,
-				ly: number,
-				dir?: ElementHandle['dir']
-			) => {
-				const p = fromLocal(boxFrame(rectToBox(bounds), el.rotation), lx, ly);
-				return { id, kind, x: p.x, y: p.y, dir, rotation } satisfies ElementHandle;
-			};
-			const ly1 = (box.y1 - box.y2) / 2;
-			const ly2 = -ly1;
-			const minLy = Math.min(ly1, ly2);
+			const frame = drawFrame(el);
+			const minLy = -getElementBounds(el).height / 2;
+			const p = fromLocal(frame, 0, minLy - RotateHandleOffset);
 			return [
-				// at('rotate', 'rotate', 0, minLy - RotateHandleOffset)
+				{ id: 'rotate', kind: 'rotate', x: p.x, y: p.y, rotation: el.rotation } satisfies ElementHandle
 			];
 		}
 		case 'blur':
@@ -694,6 +720,11 @@ export function moveElement(el: AnyElement, dx: number, dy: number): AnyElement 
 		default:
 			return assertNever(el);
 	}
+}
+
+export function cloneElement(el: AnyElement, dx = 0, dy = 0): AnyElement {
+	const copy = moveElement(structuredClone(el), dx, dy);
+	return { ...copy, id: uuid() };
 }
 
 export function resizeElement(
@@ -811,14 +842,12 @@ export function resizeElement(
 			if (handleId === 'rotate') {
 				return { ...el, rotation: rotationFromPointer(el, point, modifiers.shift) };
 			}
-			
 			const base = original.type === 'circle' ? original : el;
 			return resizeCircleBox(base, handleId, point, modifiers);
 		}
 		case 'draw': {
 			if (handleId === 'rotate') {
-				const frame = boxFrame(rectToBox(getElementBounds(el)), el.rotation);
-				return { ...el, rotation: rotationFromPointer(frame, point, modifiers.shift) };
+				return { ...el, rotation: rotationFromPointer(drawFrame(el), point, modifiers.shift) };
 			}
 			const handleIdx = +handleId;
 			if (Number.isNaN(handleId) || !Number.isFinite(handleIdx)) return el;
@@ -1047,6 +1076,16 @@ type Frame = { cx: number; cy: number; rotation: number };
 
 function boxFrame(el: Box, rotation: number): Frame {
 	return { cx: (el.x1 + el.x2) / 2, cy: (el.y1 + el.y2) / 2, rotation: rotation };
+}
+
+function drawFrame(el: DrawElement): Frame {
+	return boxFrame(rectToBox(getElementBounds(el)), el.rotation);
+}
+
+function toLocalDraw(el: DrawElement, p: Point): Point {
+	const frame = drawFrame(el);
+	const q = toLocal(frame, p);
+	return { x: frame.cx + q.x, y: frame.cy + q.y };
 }
 
 function rotationFromPointer(frame: Frame, point: Point, snap: boolean): number {

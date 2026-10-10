@@ -1,5 +1,6 @@
 import {
 	Circle,
+	Copy,
 	Crop,
 	Droplet,
 	Grid3x3,
@@ -10,6 +11,7 @@ import {
 	PencilLine,
 	Slash,
 	Square,
+	Stamp,
 	Type
 } from '@lucide/svelte';
 import type { AnyElement, ToolDefinition, ToolId } from './types';
@@ -17,6 +19,11 @@ import {
 	ArrowDefault,
 	BlurDefault,
 	BlurRadRaynge,
+	ArrowAngleRange,
+	ArrowLenRange,
+	HighlighterDefault,
+	MinPointDistanceRange,
+	OpacityRange,
 	CricleDefault,
 	FontSizeRaynge,
 	LineDefault,
@@ -34,10 +41,20 @@ const penCursor = `url("data:image/svg+xml;utf8,${encodeURIComponent(
 	`<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24'><circle cx='12' cy='12' r='4' fill='none' stroke='white' stroke-width='3'/><circle cx='12' cy='12' r='4' fill='none' stroke='black' stroke-width='1'/></svg>`
 )}") 12 12, crosshair`;
 
+const smoothingOptions = [
+	{ value: 'none', label: 'None' },
+	{ value: 'curve', label: 'Curve' },
+	{ value: 'spline', label: 'Spline' },
+	{ value: 'chaikin', label: 'Chaikin' },
+	{ value: 'average', label: 'Average' },
+	{ value: 'simplify', label: 'Simplify' }
+];
+
 export const toolOrder: ToolId[] = [
 	'crop',
 	'select',
 	'pen',
+	'highlighter',
 	'line',
 	'arrow',
 	'rect',
@@ -45,6 +62,7 @@ export const toolOrder: ToolId[] = [
 	'text',
 	'blur',
 	'pixelate',
+	'clone',
 	'image'
 ];
 
@@ -53,6 +71,7 @@ export const toolDefinitions: Record<ToolId, ToolDefinition> = {
 		id: 'crop',
 		label: 'Crop',
 		icon: Crop,
+		hotkey: 'c',
 		implemented: true,
 		createsElement: false
 	},
@@ -60,21 +79,15 @@ export const toolDefinitions: Record<ToolId, ToolDefinition> = {
 		id: 'select',
 		label: 'Select',
 		icon: MousePointer2,
+		hotkey: 'v',
 		implemented: true,
 		createsElement: false
 	},
-	// useless, just use transparent pen or rect
-	// highlight: {
-	// 	id: 'highlight',
-	// 	label: 'Highlight',
-	// 	icon: Highlighter,
-	// 	implemented: false,
-	// 	createsElement: true
-	// },
 	pen: {
 		id: 'pen',
 		label: 'Pen',
 		icon: PencilLine,
+		hotkey: 'p',
 		implemented: true,
 		createsElement: true,
 		cursor: penCursor,
@@ -84,22 +97,71 @@ export const toolDefinitions: Record<ToolId, ToolDefinition> = {
 			{
 				key: 'smoothing',
 				type: 'select',
-				options: [
-					{ value: 'none', label: 'None' },
-					{ value: 'curve', label: 'Curve' },
-					{ value: 'spline', label: 'Spline' },
-					{ value: 'chaikin', label: 'Chaikin' },
-					{ value: 'average', label: 'Average' },
-					{ value: 'simplify', label: 'Simplify' }
-				]
+				options: smoothingOptions
+			}
+		],
+		defaultFields: [
+			{ key: 'color', type: 'color', label: 'Color' },
+			{ key: 'thickness', type: 'number', label: 'Thickness', ...ThicknessRaynge },
+			{
+				key: 'smoothing',
+				type: 'select',
+				options: smoothingOptions
+			},
+			{ type: 'separator' },
+			{
+				key: 'minDistance',
+				type: 'number',
+				label: 'Point spacing',
+				unit: 'px',
+				...MinPointDistanceRange
 			}
 		],
 		defaultOptions: { ...PenDefault }
+	},
+	highlighter: {
+		id: 'highlighter',
+		label: 'Highlighter',
+		icon: Highlighter,
+		hotkey: 'h',
+		implemented: true,
+		createsElement: true,
+		cursor: penCursor,
+		optionFields: [
+			{ key: 'color', type: 'color', label: 'Color' },
+			{ key: 'thickness', type: 'number', label: 'Thickness', ...ThicknessRaynge },
+			{ key: 'opacity', type: 'number', label: 'Opacity', unit: '%', ...OpacityRange },
+			{
+				key: 'smoothing',
+				type: 'select',
+				options: smoothingOptions
+			}
+		],
+		defaultFields: [
+			{ key: 'color', type: 'color', label: 'Color' },
+			{ key: 'thickness', type: 'number', label: 'Thickness', ...ThicknessRaynge },
+			{ key: 'opacity', type: 'number', label: 'Opacity', unit: '%', ...OpacityRange },
+			{
+				key: 'smoothing',
+				type: 'select',
+				options: smoothingOptions
+			},
+			{ type: 'separator' },
+			{
+				key: 'minDistance',
+				type: 'number',
+				label: 'Point spacing',
+				unit: 'px',
+				...MinPointDistanceRange
+			}
+		],
+		defaultOptions: { ...HighlighterDefault }
 	},
 	line: {
 		id: 'line',
 		label: 'Line',
 		icon: Slash,
+		hotkey: 'l',
 		implemented: true,
 		createsElement: true,
 		optionFields: [
@@ -112,14 +174,38 @@ export const toolDefinitions: Record<ToolId, ToolDefinition> = {
 		id: 'arrow',
 		label: 'Arrow',
 		icon: MoveUpRight,
+		hotkey: 'a',
 		implemented: true,
 		createsElement: true,
 		optionFields: [
 			{ key: 'color', type: 'color', label: 'Color' },
 			{ key: 'thickness', type: 'number', label: 'Thickness', ...ThicknessRaynge },
 			{ key: 'tail', type: 'checkbox', label: 'Tail' }
-			// { key: 'headlen', type: 'number', label: 'Head Length', min: 0, max: 500, step: 1 },
-			// { key: 'headangle', type: 'number', label: 'Head Angle', min: 0, max: 180, step: 1 }
+		],
+		defaultFields: [
+			{ key: 'color', type: 'color', label: 'Color' },
+			{ key: 'thickness', type: 'number', label: 'Thickness', ...ThicknessRaynge },
+			{ type: 'separator' },
+			{ key: 'headlen', type: 'number', label: 'Head length', unit: 'px', ...ArrowLenRange },
+			{ key: 'headangle', type: 'number', label: 'Head angle', unit: '°', ...ArrowAngleRange },
+			{ type: 'separator' },
+			{ key: 'tail', type: 'checkbox', label: 'Tail' },
+			{
+				key: 'taillen',
+				type: 'number',
+				label: 'Tail length',
+				unit: 'px',
+				enabledBy: 'tail',
+				...ArrowLenRange
+			},
+			{
+				key: 'tailangle',
+				type: 'number',
+				label: 'Tail angle',
+				unit: '°',
+				enabledBy: 'tail',
+				...ArrowAngleRange
+			}
 		],
 		defaultOptions: { ...ArrowDefault }
 	},
@@ -127,6 +213,7 @@ export const toolDefinitions: Record<ToolId, ToolDefinition> = {
 		id: 'rect',
 		label: 'Rectangle',
 		icon: Square,
+		hotkey: 'r',
 		implemented: true,
 		createsElement: true,
 		optionFields: [
@@ -151,6 +238,7 @@ export const toolDefinitions: Record<ToolId, ToolDefinition> = {
 		id: 'circle',
 		label: 'Circle',
 		icon: Circle,
+		hotkey: 'o',
 		implemented: true,
 		createsElement: true,
 		optionFields: [
@@ -173,6 +261,7 @@ export const toolDefinitions: Record<ToolId, ToolDefinition> = {
 		id: 'text',
 		label: 'Text',
 		icon: Type,
+		hotkey: 't',
 		implemented: true,
 		createsElement: true,
 		cursor: 'text',
@@ -196,6 +285,7 @@ export const toolDefinitions: Record<ToolId, ToolDefinition> = {
 		id: 'image',
 		label: 'Image',
 		icon: Image,
+		hotkey: 'i',
 		implemented: true,
 		createsElement: false
 	},
@@ -204,6 +294,7 @@ export const toolDefinitions: Record<ToolId, ToolDefinition> = {
 		id: 'blur',
 		label: 'Blur',
 		icon: Droplet,
+		hotkey: 'b',
 		implemented: true,
 		createsElement: true,
 		optionFields: [{ key: 'radius', type: 'number', label: 'Radius', ...BlurRadRaynge }],
@@ -213,12 +304,44 @@ export const toolDefinitions: Record<ToolId, ToolDefinition> = {
 		id: 'pixelate',
 		label: 'Pixelate',
 		icon: Grid3x3,
+		hotkey: 'm',
 		implemented: true,
 		createsElement: true,
 		optionFields: [{ key: 'size', type: 'number', label: 'Block size', ...PixelateSizeRaygne }],
 		defaultOptions: { ...PixelateDefault }
+	},
+	clone: {
+		id: 'clone',
+		label: 'Clone',
+		icon: Stamp,
+		hotkey: 's',
+		implemented: true,
+		createsElement: false,
+		cursor: 'crosshair'
 	}
 };
+
+export const toolByHotkey: ReadonlyMap<string, ToolId> = (() => {
+	const map = new Map<string, ToolId>();
+	for (const id of toolOrder) {
+		const key = toolDefinitions[id].hotkey?.toLowerCase();
+		if (!key) continue;
+		const taken = map.get(key);
+		if (taken) throw new Error(`Hotkey "${key}" is used by both ${taken} and ${id}`);
+		map.set(key, id);
+	}
+	return map;
+})();
+
+export function toolTooltip(id: ToolId): string {
+	const { label, hotkey } = toolDefinitions[id];
+	return hotkey ? `${label} (${hotkey.toUpperCase()})` : label;
+}
+
+export function elementToolId(el: AnyElement): ToolId {
+	if (el.type === 'draw') return el.highlighter ? 'highlighter' : 'pen';
+	return elementTypeToTool[el.type];
+}
 
 export const elementTypeToTool: Record<AnyElement['type'], ToolId> = {
 	line: 'line',

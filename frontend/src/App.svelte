@@ -6,13 +6,14 @@
 	import Tooltips from './Tooltips.svelte';
 	import SettingsPanel from './SettingsPanel.svelte';
 	import { loadSettings } from '$lib/settings.svelte';
+	import { loadCapture } from '$lib/capture.svelte';
 	import { HasSnapshot } from '$lib/wailsjs/go/main/ScreenshotService';
 	let canvas = $state<HTMLCanvasElement>();
 	let hasSnapshot = $state(false);
 	let ready = $state(false);
 
 	onMount(async () => {
-		await loadSettings();
+		await Promise.all([loadSettings(), loadCapture()]);
 		hasSnapshot = await HasSnapshot();
 		ready = true;
 

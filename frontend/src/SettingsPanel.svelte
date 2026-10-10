@@ -11,6 +11,7 @@
 	import SaveBar from '$lib/components/SaveBar.svelte';
 	import OptionFields from './OptionFields.svelte';
 	import SettingsPreview from './SettingsPreview.svelte';
+	import CapturePicker from './CapturePicker.svelte';
 	import { toolDefinitions, toolOrder } from '$lib/tools/registry';
 	import type { ToolId } from '$lib/tools/types';
 	import {
@@ -25,6 +26,8 @@
 		type SaveActionId,
 		type Settings
 	} from '$lib/settings.svelte';
+	import { capture, storeCaptureMethod, testCapture } from '$lib/capture.svelte';
+	import { app, loadVersion } from '$lib/version.svelte';
 	import { PickFolderPath } from '$lib/wailsjs/go/main/ScreenshotService';
 	import { fade, fly } from 'svelte/transition';
 
@@ -41,13 +44,28 @@
 	}));
 
 	let draft = $state<Settings>($state.snapshot(settings.data) as Settings);
-	let section = $state<'defaults' | 'save'>('defaults');
+	let section = $state<'defaults' | 'save' | 'capture'>(
+		capture.configured ? 'defaults' : 'capture'
+	);
+	let captureChoice = $state(capture.selected);
 	let tool = $state<ToolId>(toolIds[0]);
 	let saving = $state(false);
 	let message = $state('');
 
-	const fields = $derived(toolDefinitions[tool].optionFields ?? []);
-	const dirty = $derived(JSON.stringify(draft) !== JSON.stringify(settings.data));
+	const fields = $derived(
+		toolDefinitions[tool].defaultFields ?? toolDefinitions[tool].optionFields ?? []
+	);
+	const captureDirty = $derived(captureChoice !== capture.selected);
+	const dirty = $derived(JSON.stringify(draft) !== JSON.stringify(settings.data) || captureDirty);
+	const needsCapture = $derived(!capture.configured && !captureChoice);
+
+	$effect(() => {
+		void loadVersion();
+	});
+
+	$effect(() => {
+		if (open && section === 'capture' && !capture.tested && !capture.testing) void testCapture();
+	});
 	const visibleSaves = $derived(
 		saveActionIds.filter((id) => id !== 'cancel' && draft.saveActions[id].visible)
 	);
@@ -80,12 +98,13 @@
 		saving = true;
 		message = '';
 		try {
+			if (captureDirty && captureChoice) await storeCaptureMethod(captureChoice);
 			await storeSettings($state.snapshot(draft) as Settings);
 			if (onclose) onclose();
 			else message = 'Settings saved';
 		} catch (err) {
 			console.error('save settings failed', err);
-			message = 'Could not save settings';
+			message = captureDirty ? String(err) : 'Could not save settings';
 		} finally {
 			saving = false;
 		}
@@ -118,6 +137,9 @@
 				)}
 			>
 				<div class="text-sm font-medium">Settings</div>
+				{#if app.version}
+					<div class="text-xs text-muted-foreground">v{app.version}</div>
+				{/if}
 				<div class={cn('ml-4 flex gap-1', standalone && '[--wails-draggable:no-drag]')}>
 					<Button
 						size="sm"
@@ -132,6 +154,13 @@
 						onclick={() => (section = 'save')}
 					>
 						Save options
+					</Button>
+					<Button
+						size="sm"
+						variant={section === 'capture' ? 'default' : 'secondary'}
+						onclick={() => (section = 'capture')}
+					>
+						Capture
 					</Button>
 				</div>
 				{#if standalone}
@@ -181,7 +210,13 @@
 							<div class="flex flex-wrap items-center gap-3 rounded-xl px-2 py-2">
 								<OptionFields {fields} get={getOption} set={setOption} />
 							</div>
-							<SettingsPreview {tool} options={draft.tools[tool] ?? {}} />
+							<SettingsPreview
+								{tool}
+								options={draft.tools[tool] ?? {}}
+								onchange={(patch) => {
+									for (const [key, value] of Object.entries(patch)) setOption(key, value);
+								}}
+							/>
 							<div>
 								<Button size="sm" variant="secondary" onclick={resetTool}
 									>Reset {toolDefinitions[tool].label}</Button
@@ -189,6 +224,8 @@
 							</div>
 						</div>
 					</div>
+				{:else if section === 'capture'}
+					<CapturePicker bind:value={captureChoice} />
 				{:else}
 					<div class="flex flex-col gap-4">
 						<div class="flex justify-center rounded-xl py-1">
@@ -272,12 +309,14 @@
 			<Separator />
 			<div class="flex items-center gap-2 px-4 py-3">
 				<Button size="sm" variant="secondary" onclick={resetAll}>Reset all</Button>
-				<div class="text-xs text-muted-foreground">{message}</div>
+				<div class="text-xs text-muted-foreground">
+					{message || (needsCapture ? 'Choose a screenshot method to continue' : '')}
+				</div>
 				<div class="ml-auto flex gap-2">
 					{#if onclose}
 						<Button size="sm" variant="secondary" onclick={onclose}>Cancel</Button>
 					{/if}
-					<Button size="sm" disabled={saving || !dirty} onclick={save}>Save</Button>
+					<Button size="sm" disabled={saving || !dirty || needsCapture} onclick={save}>Save</Button>
 				</div>
 			</div>
 		</div>

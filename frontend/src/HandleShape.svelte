@@ -47,7 +47,15 @@
 	{:else if handle.kind === 'radius'}
 		<path d="M 0 -8 L 8 0 L 0 8 L -8 0 Z" fill="#60a5fa" stroke-linejoin="round" />
 	{:else if handle.kind === 'rotate'}
-		<line x1="0" y1="0" x2="0" y2={RotateHandleOffset} stroke="#aaa" stroke-width="1.5" pointer-events="none" />
+		<line
+			x1="0"
+			y1="0"
+			x2="0"
+			y2={RotateHandleOffset}
+			stroke="#aaa"
+			stroke-width="1.5"
+			pointer-events="none"
+		/>
 		<circle r="8" fill="#60a5fa" />
 		<path
 			d="M -3.5 0.5 A 3.5 3.5 0 1 1 0 3.5"

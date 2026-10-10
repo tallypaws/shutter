@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
-	"changeme/capture"
+	"github.com/tallypaws/shutter/capture"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -27,7 +29,13 @@ var editPath string
 func init() {
 	flag.StringVar(&editPath, "open", "", "path to screenshot to open")
 	flag.Bool("screenshot", false, "take a screenshot and edit it")
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println("shutter", appVersion())
+		os.Exit(0)
+	}
 
 	switch {
 	case capture.Requested:
@@ -60,8 +68,17 @@ func main() {
 	if capture.Requested {
 		if err := capture.Wait(); err != nil {
 			fmt.Fprintln(os.Stderr, "shutter: screenshot failed:", err)
+			capture.Cleanup()
 			os.Exit(1)
 		}
+
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+		go func() {
+			<-sig
+			capture.Cleanup()
+			os.Exit(1)
+		}()
 	}
 
 	if err := os.Setenv("GDK_BACKEND", "x11"); err != nil {
@@ -110,6 +127,8 @@ func main() {
 			Icon:                appIcon,
 		},
 	})
+
+	capture.Cleanup()
 
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "shutter:", err)

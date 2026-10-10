@@ -1,9 +1,10 @@
+import { clamp } from '@tally.paws/toolbox';
 import type { AnyElement, Rect, TextElement } from '$lib/tools/types';
 import { canvasFont, textCenter } from '$lib/tools/text';
 import { getElementBounds } from '$lib/tools/elements';
 import { smoothPath } from '$lib/tools/smooth';
 import { DSmooth, DSmoothAmt, TextLineHeight } from '$lib/tools/defaults';
-import { blurRegion, pixelateRegion, snapRegion } from './effects';
+import { blurRegion, pixelateRegion, snapRegion, type Region } from './effects';
 import { getImage } from './images';
 
 export type RenderOptions = {
@@ -143,6 +144,7 @@ export function drawElement(
 				amount: DSmoothAmt,
 				thickness: el.thickness
 			});
+			if (el.opacity !== undefined) ctx.globalAlpha = clamp(el.opacity / 100, 0, 1);
 			ctx.strokeStyle = el.color;
 			ctx.lineWidth = el.thickness;
 			ctx.lineCap = 'round';
@@ -216,6 +218,38 @@ export async function ensureFonts(elements: AnyElement[]): Promise<boolean> {
 	if (!pending.length) return false;
 	await Promise.all(pending);
 	return true;
+}
+
+
+export async function captureRegion(
+	base: CanvasImageSource,
+	width: number,
+	height: number,
+	elements: AnyElement[],
+	region: Region
+): Promise<ImageBitmap> {
+	await ensureFonts(elements);
+
+	const full = document.createElement('canvas');
+	full.width = width;
+	full.height = height;
+	renderScene(getSceneContext(full), base, width, height, elements);
+
+	const out = document.createElement('canvas');
+	out.width = region.w;
+	out.height = region.h;
+	const octx = getSceneContext(out);
+	octx.imageSmoothingEnabled = false;
+	octx.drawImage(full, region.x, region.y, region.w, region.h, 0, 0, region.w, region.h);
+	full.width = 0;
+	full.height = 0;
+
+	try {
+		return await createImageBitmap(out);
+	} finally {
+		out.width = 0;
+		out.height = 0;
+	}
 }
 
 export async function exportPng(

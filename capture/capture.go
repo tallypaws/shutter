@@ -2,14 +2,13 @@ package capture
 
 import (
 	"errors"
+	"fmt"
 	"image/png"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"strconv"
 	"time"
 )
-
-const screen = "eDP-1"
 
 var (
 	Requested bool
@@ -19,35 +18,51 @@ var (
 )
 
 func init() {
-	for _, arg := range os.Args[1:] {
-		if arg == "--screenshot" || arg == "-screenshot" {
-			Requested = true
-			break
-		}
-	}
-
-	if !Requested {
+	if !screenshotFlag() {
 		return
 	}
 
-	Path = "/tmp/shutter-" +
-		strconv.Itoa(os.Getpid()) + "-" +
-		strconv.FormatInt(time.Now().UnixNano(), 36) +
-		".png"
+	id, ok := Selected()
+	if !ok {
+		println("shutter: no screenshot method chosen yet, opening setup instead")
+		return
+	}
+	m, _ := lookup(id)
+
+	Requested = true
+
+	Path = filepath.Join(os.TempDir(), "shutter-"+
+		strconv.Itoa(os.Getpid())+"-"+
+		strconv.FormatInt(time.Now().UnixNano(), 36)+
+		".png")
 
 	done = make(chan error, 1)
+	go func() {
+		if err := m.Capture(Path); err != nil {
+			done <- fmt.Errorf("%s: %w", m.Name, err)
+			return
+		}
+		done <- nil
+	}()
+}
 
-	cmd := exec.Command("gpu-screen-recorder", "-w", screen, "-o", Path)
-	cmd.Stderr = os.Stderr
+func screenshotFlag() bool {
+	for _, arg := range os.Args[1:] {
+		if arg == "--screenshot" || arg == "-screenshot" {
+			return true
+		}
+	}
+	return false
+}
 
-	if err := cmd.Start(); err != nil {
-		done <- err
+func Cleanup() {
+	if !Requested || Path == "" {
 		return
 	}
 
-	go func() {
-		done <- cmd.Wait()
-	}()
+	if err := os.Remove(Path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		println("shutter: could not remove temp screenshot:", err.Error())
+	}
 }
 
 func Wait() error {
@@ -55,24 +70,7 @@ func Wait() error {
 		return nil
 	}
 
-	if err := <-done; err != nil {
-		return err
-	}
-
-	deadline := time.Now().Add(2 * time.Second)
-
-	for {
-		err := checkPNG(Path)
-		if err == nil {
-			return nil
-		}
-
-		if time.Now().After(deadline) {
-			return err
-		}
-
-		time.Sleep(time.Millisecond)
-	}
+	return <-done
 }
 
 func checkPNG(path string) error {
@@ -86,6 +84,5 @@ func checkPNG(path string) error {
 	if err != nil {
 		return errors.New("screenshot PNG is not ready: " + err.Error())
 	}
-	println("png ready")
 	return nil
 }

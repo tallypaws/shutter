@@ -167,9 +167,8 @@ export function defaultSettings(): Settings {
 					smallBtn: saveActionMeta[id].smallBtn
 				}
 			])
-		) as Record<SaveActionId, SaveActionSetting>
-		,
-		saveDir: "~"
+		) as Record<SaveActionId, SaveActionSetting>,
+		saveDir: '~'
 	};
 }
 
@@ -182,6 +181,8 @@ export function normalizeSettings(raw: unknown): Settings {
 	if (!isRecord(raw)) return out;
 
 	if (typeof raw.closeAfterSave === 'boolean') out.closeAfterSave = raw.closeAfterSave;
+
+	if (typeof raw.saveDir === 'string') out.saveDir = raw.saveDir.trim();
 
 	if (isRecord(raw.tools)) {
 		for (const [toolId, defaults] of Object.entries(out.tools)) {
@@ -204,6 +205,7 @@ export function normalizeSettings(raw: unknown): Settings {
 			if (typeof saved.visible === 'boolean') target.visible = saved.visible;
 			if (typeof saved.label === 'string') target.label = saved.label.slice(0, 32);
 			if (typeof saved.icon === 'string' && saved.icon in saveIcons) target.icon = saved.icon;
+			if (typeof saved.smallBtn === 'boolean') target.smallBtn = saved.smallBtn;
 		}
 	}
 

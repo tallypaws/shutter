@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log"
 	"os"
@@ -11,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-text/typesetting/font"
 	ot "github.com/go-text/typesetting/font/opentype"
@@ -35,15 +38,82 @@ func (s *ScreenshotService) ListFonts() []string {
 	return s.fonts
 }
 
-func (s *ScreenshotService) SaveImage(data []byte) (string, error) {
-	if editPath == "" {
-		return "", errors.New("no screenshot loaded")
-	}
-	if len(data) == 0 {
-		return "", errors.New("empty image")
+func expandPath(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return ""
 	}
 
-	out := strings.TrimSuffix(editPath, filepath.Ext(editPath)) + "-edited.png"
+	if home, err := os.UserHomeDir(); err == nil {
+		switch {
+		case p == "~":
+			p = home
+		case strings.HasPrefix(p, "~/") || strings.HasPrefix(p, "~"+string(filepath.Separator)):
+			p = filepath.Join(home, p[2:])
+		}
+	}
+
+	p = os.ExpandEnv(p)
+
+	return filepath.Clean(p)
+}
+
+func resolveSaveDir(dir string) string {
+	dir = expandPath(dir)
+	if dir == "" && editPath != "" {
+		dir = filepath.Dir(editPath)
+	}
+	if dir == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			dir = home
+		}
+	}
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	return dir
+}
+
+func uniquePath(dir, base, ext string) string {
+	candidate := filepath.Join(dir, base+ext)
+	for i := 2; ; i++ {
+		if _, err := os.Stat(candidate); errors.Is(err, fs.ErrNotExist) {
+			return candidate
+		}
+		candidate = filepath.Join(dir, fmt.Sprintf("%s-%d%s", base, i, ext))
+	}
+}
+
+func defaultFilePath(dir string) string {
+	return uniquePath(resolveSaveDir(dir), "shutter-"+time.Now().Format("2006-01-02_15-04-05"), ".png")
+}
+
+func decodeImageData(dataB64 string) ([]byte, error) {
+	if i := strings.Index(dataB64, ","); strings.HasPrefix(dataB64, "data:") && i >= 0 {
+		dataB64 = dataB64[i+1:]
+	}
+	data, err := base64.StdEncoding.DecodeString(dataB64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid image data: %w", err)
+	}
+	if len(data) == 0 {
+		return nil, errors.New("empty image")
+	}
+	return data, nil
+}
+
+func (s *ScreenshotService) SaveImage(dir string, dataB64 string) (string, error) {
+	data, err := decodeImageData(dataB64)
+	if err != nil {
+		return "", err
+	}
+
+	target := resolveSaveDir(dir)
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		return "", fmt.Errorf("cannot create %s: %w", target, err)
+	}
+
+	out := defaultFilePath(dir)
 	if err := os.WriteFile(out, data, 0o644); err != nil {
 		return "", err
 	}
@@ -51,22 +121,27 @@ func (s *ScreenshotService) SaveImage(data []byte) (string, error) {
 	return out, nil
 }
 
-func (s *ScreenshotService) DefaultSavePath() string {
-	if editPath == "" {
-		return ""
-	}
-	return strings.TrimSuffix(editPath, filepath.Ext(editPath)) + "-edited.png"
+func (s *ScreenshotService) DefaultSavePath(dir string) string {
+	return defaultFilePath(dir)
 }
 
-func (s *ScreenshotService) SaveImageTo(path string, data []byte) (string, error) {
+func (s *ScreenshotService) SaveImageTo(path string, dataB64 string) (string, error) {
+	path = expandPath(path)
 	if path == "" {
 		return "", errors.New("no path given")
 	}
-	if len(data) == 0 {
-		return "", errors.New("empty image")
+
+	data, err := decodeImageData(dataB64)
+	if err != nil {
+		return "", err
 	}
+
 	if filepath.Ext(path) == "" {
 		path += ".png"
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
 	}
 
 	if err := os.WriteFile(path, data, 0o644); err != nil {
@@ -81,6 +156,7 @@ func (s *ScreenshotService) PickSavePath(defaultPath string) (string, error) {
 		return "", errors.New("Wails runtime is not initialized")
 	}
 
+	defaultPath = expandPath(defaultPath)
 	filename := filepath.Base(defaultPath)
 	directory := filepath.Dir(defaultPath)
 
@@ -102,7 +178,10 @@ func (s *ScreenshotService) PickFolderPath(defaultPath string) (string, error) {
 		return "", errors.New("Wails runtime is not initialized")
 	}
 
-	directory := filepath.Dir(defaultPath)
+	directory := resolveSaveDir(defaultPath)
+	if info, err := os.Stat(directory); err != nil || !info.IsDir() {
+		directory = filepath.Dir(directory)
+	}
 
 	return runtime.OpenDirectoryDialog(s.ctx, runtime.OpenDialogOptions{
 		DefaultDirectory:     directory,

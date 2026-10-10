@@ -91,22 +91,41 @@ function boxH(src: Uint8ClampedArray, dst: Uint8ClampedArray, w: number, h: numb
 
 function boxV(src: Uint8ClampedArray, dst: Uint8ClampedArray, w: number, h: number, r: number) {
 	const n = 2 * r + 1;
-	const half = n >> 1;
-	const last = h - 1;
+	const half = r;
 	const stride = w * 4;
-	for (let x = 0; x < w; x++) {
-		for (let c = 0; c < 4; c++) {
-			const o = x * 4 + c;
-			let sum = src[o] * r;
-			for (let i = 0; i <= r; i++) sum += src[o + Math.min(i, last) * stride];
-			for (let y = 0; y < h; y++) {
-				dst[o + y * stride] = ((sum + half) / n) | 0;
-				sum += src[o + Math.min(y + r + 1, last) * stride] - src[o + Math.max(y - r, 0) * stride];
-			}
+	const last = h - 1;
+	const sums = new Int32Array(stride);
+	for (let y = 0; y <= Math.min(r, last); y++) {
+		const row = y * stride;
+		for (let i = 0; i < stride; i++) {
+			sums[i] += src[row + i];
+		}
+	}
+	for (let i = 0; i < stride; i++) {
+		sums[i] += src[i] * r;
+	}
+	for (let y = 0; y < h; y++) {
+		const row = y * stride;
+		for (let i = 0; i < stride; i++) {
+			dst[row + i] = ((sums[i] + half) / n) | 0;
+		}
+		if (y === last) break;
+		const addRow = Math.min(y + r + 1, last) * stride;
+		const removeRow = Math.max(y - r, 0) * stride;
+		for (let i = 0; i < stride; i++) {
+			sums[i] += src[addRow + i] - src[removeRow + i];
 		}
 	}
 }
 
+let scratch = new Uint8ClampedArray(0);
+
+function getScratch(length: number) {
+	if (scratch.length < length) {
+		scratch = new Uint8ClampedArray(length);
+	}
+	return scratch;
+}
 
 export function blurRegion(
 	ctx: CanvasRenderingContext2D,
@@ -127,7 +146,7 @@ export function blurRegion(
 
 	const img = ctx.getImageData(ex0, ey0, ew, eh);
 	const a = img.data;
-	const b = new Uint8ClampedArray(a.length);
+	const b = getScratch(a.length);
 	for (const rad of radii) {
 		if (rad < 1) continue;
 		boxH(a, b, ew, eh, rad);

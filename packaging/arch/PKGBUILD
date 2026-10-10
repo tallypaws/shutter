@@ -1,16 +1,29 @@
 pkgname=shutter
-pkgver=0.1.0
+pkgver=$(tr -d '[:space:]' < "${startdir}/../../VERSION")
 pkgrel=1
 
 pkgdesc='screenshot editor'
+url='https://github.com/tallypaws/shutter'
 arch=('x86_64')
-license=('MIT')
+license=('PolyForm-Noncommercial-1.0.0')
 
 depends=(
 	'gtk3'
 	'webkit2gtk-4.1'
-	'gpu-screen-recorder'
 )
+
+optdepends=(
+	'grim: capture on Hyprland, Sway, niri and other wlroots compositors'
+	'xdg-desktop-portal: capture on GNOME and other desktops'
+	'maim: capture on X11'
+	'xdotool: capture the monitor under the mouse on X11'
+	'wl-clipboard: clipboard support on Wayland'
+	'xclip: clipboard support on X11'
+	'gpu-screen-recorder: fast GPU-based capture'
+)
+
+# perl thingy has the naem and will kill my binary :(
+conflicts=('shutter')
 
 source=(
 	'shutter'
@@ -35,5 +48,9 @@ package() {
 
 	install -Dm644 \
 		"$srcdir/shutter.png" \
-		"$pkgdir/usr/share/pixmaps/shutter.png"
+		"$pkgdir/usr/share/icons/hicolor/512x512/apps/shutter.png"
+
+	install -Dm644 \
+		"$startdir/../../LICENSE" \
+		"$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

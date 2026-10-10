@@ -8,7 +8,16 @@
 	import { mouseMoveListeners, mouseUpListeners } from './dragstate';
 	import { get } from 'svelte/store';
 	import DragHandle from './DragHandle.svelte';
-	import { elementTypeToTool, toolDefinitions, toolOrder } from '$lib/tools/registry';
+	import {
+		elementToolId,
+		toolByHotkey,
+		toolDefinitions,
+		toolOrder,
+		toolTooltip
+	} from '$lib/tools/registry';
+	import { Layers, Redo2, Undo2 } from '@lucide/svelte';
+	import { Separator } from '$lib/components/ui/separator';
+	import { readClipboardImages } from '$lib/clipboardImage';
 
 	import type {
 		AnyElement,
@@ -22,6 +31,8 @@
 	import {
 		createElement,
 		createImageElement,
+		cloneElement,
+		createImageElementAt,
 		finishElement,
 		getElementBounds,
 		getElementHandles,
@@ -44,9 +55,10 @@
 		HistLimit,
 		transgender
 	} from '$lib/tools/defaults';
-	import { showTooltip, tooltips } from './tooltip.svelte';
+	import { showTooltip, tooltip, tooltips } from './tooltip.svelte';
 	import TextNode from './TextNode.svelte';
 	import OptionFields from './OptionFields.svelte';
+	import LayersPanel from './LayersPanel.svelte';
 	import SaveBar from '$lib/components/SaveBar.svelte';
 	import SettingsPanel from './SettingsPanel.svelte';
 	import {
@@ -56,7 +68,8 @@
 		shortcutSaveAction,
 		type SaveActionId
 	} from '$lib/settings.svelte';
-	import { ensureFonts, exportPng, getSceneContext } from '$lib/render/scene';
+	import { captureRegion, ensureFonts, exportPng, getSceneContext } from '$lib/render/scene';
+	import { snapRegion } from '$lib/render/effects';
 	import { LayerRenderer } from '$lib/render/layers';
 	import { getImage, pickImageFiles, registerImage } from '$lib/render/images';
 	import { performSave, type SaveMode } from '$lib/save';
@@ -64,6 +77,7 @@
 	import { HasSnapshot } from '$lib/wailsjs/go/main/ScreenshotService';
 	import ImageBitmapImg from './ImageBitmapImg.svelte';
 	import { Badge } from '$lib/components/ui/badge';
+	import { Kbd } from '$lib/components/ui/kbd';
 
 	const cropFadeOut = 0.6;
 
@@ -179,16 +193,13 @@
 		if ((await runSave(mode)) && settings.data.closeAfterSave) {
 			WindowHide();
 
-			for (let i = 0; i < 40; i++) {
-				if (await clipboardHasValidPng()) {
-					Quit();
-					return;
+			if (mode.copy) {
+				for (let i = 0; i < 60; i++) {
+					if (await clipboardHasValidPng()) break;
+					await new Promise((resolve) => setTimeout(resolve, 15));
 				}
-
-				await new Promise((resolve) => setTimeout(resolve, 50));
 			}
 
-			console.error('Clipboard verification timed out');
 			Quit();
 		}
 	}
@@ -422,7 +433,7 @@
 
 	let optionFields = $derived(
 		editedElement
-			? (toolDefinitions[elementTypeToTool[editedElement.type]]?.optionFields ?? [])
+			? (toolDefinitions[elementToolId(editedElement)]?.optionFields ?? [])
 			: (activeToolDef.optionFields ?? [])
 	);
 
@@ -448,6 +459,13 @@
 	let redoStack: AnyElement[][] = [];
 	let dragBefore: AnyElement[] | null = null;
 
+	let undoDepth = $state(0);
+	let redoDepth = $state(0);
+	function syncHistoryDepth() {
+		undoDepth = undoStack.length;
+		redoDepth = redoStack.length;
+	}
+
 	function snapshotElements(): AnyElement[] {
 		return $state.snapshot(elements) as AnyElement[];
 	}
@@ -460,6 +478,7 @@
 		undoStack.push(before);
 		if (undoStack.length > HistLimit) undoStack.shift();
 		redoStack = [];
+		syncHistoryDepth();
 	}
 
 	function commitDragHistory() {
@@ -475,6 +494,7 @@
 		if (!previous) return;
 		redoStack.push(snapshotElements());
 		elements = previous;
+		syncHistoryDepth();
 	}
 
 	function redo() {
@@ -482,6 +502,7 @@
 		if (!next) return;
 		undoStack.push(snapshotElements());
 		elements = next;
+		syncHistoryDepth();
 	}
 
 	function deleteSelectedElement() {
@@ -490,6 +511,123 @@
 		pushHistory(snapshotElements());
 		elements = elements.filter((el) => el.id !== id);
 		selectedElementId = null;
+	}
+
+	const ElementClipboardMarker = 'shutter-element';
+	const DuplicateOffset = 12;
+	let elementClipboard: AnyElement | null = null;
+
+	function isPending(id: string) {
+		return pendingImages.some((p) => p.id === id);
+	}
+
+	function copySelectedElement(): boolean {
+		if (!selectedElement || isPending(selectedElement.id)) return false;
+		elementClipboard = snapshotElement(selectedElement);
+		void navigator.clipboard?.writeText(ElementClipboardMarker).catch(() => {});
+		return true;
+	}
+
+	function cutSelectedElement() {
+		if (copySelectedElement()) deleteSelectedElement();
+	}
+
+	function insertClone(source: AnyElement, dx: number, dy: number): AnyElement {
+		const copy = cloneElement(source, dx, dy);
+		endEditing();
+		pushHistory(snapshotElements());
+		elements.push(copy);
+		selectedElementId = copy.id;
+		if (activeTool !== 'select') selectTool('select');
+		return copy;
+	}
+
+	function duplicateSelectedElement() {
+		if (!selectedElement || isPending(selectedElement.id)) return;
+		insertClone(selectedElement, DuplicateOffset, DuplicateOffset);
+	}
+
+	let pasteKeyHeld = false;
+	let followId: string | null = null;
+	let followLast: { x: number; y: number } | null = null;
+
+	function pasteElementAtPointer() {
+		if (!elementClipboard || !pasteKeyHeld || followId || !svg) return;
+		const pointer = pointerToImage({ clientX: mouseX(), clientY: mouseY() });
+		const bounds = getElementBounds(elementClipboard);
+		const copy = insertClone(
+			elementClipboard,
+			pointer.x - (bounds.x + bounds.width / 2),
+			pointer.y - (bounds.y + bounds.height / 2)
+		);
+		followId = copy.id;
+		followLast = pointer;
+	}
+
+	function followPointer(event: PointerEvent) {
+		if (!followId || !followLast) return;
+		const point = pointerToImage(event);
+		const dx = point.x - followLast.x;
+		const dy = point.y - followLast.y;
+		followLast = point;
+		const index = elements.findIndex((el) => el.id === followId);
+		if (index !== -1 && (dx || dy)) elements[index] = moveElement(elements[index], dx, dy);
+	}
+
+	function endFollow() {
+		followId = null;
+		followLast = null;
+	}
+
+	function releasePasteKey() {
+		pasteKeyHeld = false;
+		endFollow();
+	}
+
+	function handlePasteKeyUp(event: KeyboardEvent) {
+		const key = event.key.toLowerCase();
+		if (key === 'v' || key === 'control' || key === 'meta') releasePasteKey();
+	}
+
+	let layersOpen = $state(false);
+
+	let layerElements = $derived(elements.filter((el) => !pendingImages.some((p) => p.id === el.id)));
+
+	function selectLayer(id: string) {
+		selectTool('select');
+		selectedElementId = id;
+	}
+
+	function applyLayerOrder(order: string[]) {
+		const before = snapshotElements();
+		const pending = new Set(pendingImages.map((p) => p.id));
+		const byId = new Map(before.map((el) => [el.id, el]));
+
+		const next = [...before];
+		let i = 0;
+		for (let slot = 0; slot < next.length; slot++) {
+			if (pending.has(next[slot].id)) continue;
+			const el = byId.get(order[i++]);
+			if (el) next[slot] = el;
+		}
+
+		if (next.every((el, idx) => el.id === before[idx].id)) return;
+		pushHistory(before);
+		elements = next;
+	}
+
+	function reorderLayers(topToBottom: string[]) {
+		applyLayerOrder(topToBottom.toReversed());
+	}
+
+	function stepLayer(id: string, step: number) {
+		const order = layerElements.map((el) => el.id);
+		const from = order.indexOf(id);
+		if (from === -1) return;
+		const to = clamp(from + step, 0, order.length - 1);
+		if (to === from) return;
+		order.splice(to, 0, ...order.splice(from, 1));
+		applyLayerOrder(order);
 	}
 
 	function isTypingTarget(target: EventTarget | null) {
@@ -501,7 +639,34 @@
 
 	function handleKeyDown(event: KeyboardEvent) {
 		if (event.defaultPrevented || isTypingTarget(event.target) || settingsOpen) return;
-		if (elementDrag || cropDrag) return;
+		if (cloneDrag && event.key === 'Escape') {
+			event.preventDefault();
+			cancelClone();
+			return;
+		}
+		if (elementDrag || cropDrag || cloneDrag) return;
+
+		if (event.key === 'Escape' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+			if (
+				event.target instanceof HTMLElement &&
+				event.target.closest(
+					'[role="dialog"], [role="listbox"], [role="menu"], [data-popover-content], [data-select-content]'
+				)
+			) {
+				return;
+			}
+			event.preventDefault();
+			if (editingId) {
+				endEditing();
+			} else if (pendingImages.length) {
+				selectTool('select');
+			} else if (layersOpen) {
+				layersOpen = false;
+			} else {
+				closeEditor();
+			}
+			return;
+		}
 
 		const mod = event.ctrlKey || event.metaKey;
 		const key = event.key.toLowerCase();
@@ -518,6 +683,21 @@
 			return;
 		}
 
+		if (mod && !event.altKey && !event.shiftKey && (key === 'c' || key === 'x')) {
+			if (!selectedElement || activeTool === 'crop') return;
+			event.preventDefault();
+			if (key === 'c') copySelectedElement();
+			else cutSelectedElement();
+			return;
+		}
+
+		if (mod && !event.altKey && !event.shiftKey && key === 'd') {
+			if (!selectedElement) return;
+			event.preventDefault();
+			if (!event.repeat) duplicateSelectedElement();
+			return;
+		}
+
 		if (mod && key === 'z') {
 			event.preventDefault();
 			if (event.shiftKey) redo();
@@ -531,14 +711,34 @@
 			return;
 		}
 
+		if (!mod && !event.altKey && activeTool === 'select' && selectedElement) {
+			const steps: Record<string, number> = { '[': -1, ']': 1, '{': -Infinity, '}': Infinity };
+			const step = steps[event.key];
+			if (step !== undefined) {
+				event.preventDefault();
+				stepLayer(selectedElement.id, step);
+				return;
+			}
+		}
+
+		if (!mod && !event.altKey && !event.shiftKey && !event.repeat) {
+			const hotkeyTool = toolByHotkey.get(key);
+			if (hotkeyTool) {
+				event.preventDefault();
+				selectTool(hotkeyTool);
+				return;
+			}
+		}
+
 		if ((event.key === 'Delete' || event.key === 'Backspace') && activeTool === 'select') {
 			if (!selectedElement) return;
 			event.preventDefault();
 			deleteSelectedElement();
 		}
-		if (event.key === 'Escape' && activeTool === 'select') {
-			selectedElement = null;
-		}
+	}
+
+	function closeEditor() {
+		void Quit();
 	}
 
 	const pendingImages: ImageElement[] = $state([]);
@@ -563,105 +763,86 @@
 		if (pendingImages.length === 0) activeTool = 'select';
 	}
 
-	async function addImage(src: ImageBitmapSource) {
-		if (!crop) return;
-		const added: ImageElement[] = [];
+	function addBitmaps(bitmaps: ImageBitmap[]) {
+		if (!bitmaps.length || !sourceWidth || !sourceHeight) return false;
 		const area = { x: 0, y: 0, width: sourceWidth, height: sourceHeight };
 
-		try {
-			const bitmap = await createImageBitmap(src);
-			added.push(
-				createImageElement(
-					registerImage(bitmap),
-					bitmap,
-					{ x: -bitmap.width / 2, y: -bitmap.height / 2 },
-					area
-				)
-			);
-		} catch {}
+		const added = bitmaps.map((bitmap) =>
+			createImageElement(
+				registerImage(bitmap),
+				bitmap,
+				{ x: -bitmap.width / 2, y: -bitmap.height / 2 },
+				area
+			)
+		);
 
+		endEditing();
 		elements.push(...added);
 		pendingImages.push(...added);
 		activeTool = 'image';
+		return true;
 	}
 
-	window.addEventListener('paste', async (event) => {
-		const items = event.clipboardData?.items;
-		if (!items) return;
+	let pasteInFlight = false;
+	let pasteEventSeen = false;
 
-		let handledImage = false;
-
-		for (const item of items) {
-			console.log(item.kind, item.type);
-
-			if (item.kind === 'file' && item.type.startsWith('image/')) {
-				const blob = item.getAsFile();
-				if (blob) {
-					addImage(blob);
-					handledImage = true;
-					break;
-				}
+	async function pasteImages(dt: DataTransfer | null) {
+		if (pasteInFlight) return;
+		pasteInFlight = true;
+		try {
+			const marked = dt?.getData('text/plain') === ElementClipboardMarker;
+			if (elementClipboard && (marked || !dt)) {
+				pasteElementAtPointer();
+				return;
 			}
-		}
-
-		if (handledImage) return;
-
-		for (const item of items) {
-			if (item.type === 'text/html') {
-				const html = await new Promise<string>((resolve) => {
-					item.getAsString(resolve);
-				});
-
-				const doc = new DOMParser().parseFromString(html, 'text/html');
-				const img = doc.querySelector('img');
-
-				if (img?.src) {
-					try {
-						const response = await fetch(img.src);
-						if (!response.ok) continue;
-
-						const blob = await response.blob();
-
-						if (blob.type.startsWith('image/')) {
-							addImage(blob);
-							handledImage = true;
-							break;
-						}
-					} catch (error) {
-						console.error('Failed to fetch pasted image:', error);
-					}
-				}
+			const bitmaps = await readClipboardImages(dt);
+			if (!bitmaps.length && elementClipboard) {
+				pasteElementAtPointer();
+				return;
 			}
+			if (!addBitmaps(bitmaps)) flash('No image found on the clipboard');
+		} catch (error) {
+			console.error('paste failed', error);
+			flash('Could not paste the image');
+		} finally {
+			pasteInFlight = false;
 		}
+	}
 
-		if (handledImage) return;
+	function handlePaste(event: ClipboardEvent) {
+		pasteEventSeen = true;
+		if (isTypingTarget(event.target) || settingsOpen) return;
 
-		for (const item of items) {
-			if (item.type === 'text/uri-list') {
-				const uri = await new Promise<string>((resolve) => {
-					item.getAsString(resolve);
-				});
+		event.preventDefault();
+		void pasteImages(event.clipboardData);
+	}
 
-				const url = uri.split(/\r?\n/).find((line) => line && !line.startsWith('#'));
+	function handlePasteShortcut(event: KeyboardEvent) {
+		if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'v') return;
+		if (event.altKey || isTypingTarget(event.target) || settingsOpen) return;
 
-				if (!url) continue;
+		pasteKeyHeld = true;
+		pasteEventSeen = false;
+		setTimeout(() => {
+			if (!pasteEventSeen) void pasteImages(null);
+		}, 120);
+	}
 
-				try {
-					const response = await fetch(url);
-					if (!response.ok) continue;
-
-					const blob = await response.blob();
-
-					if (blob.type.startsWith('image/')) {
-						addImage(blob);
-						break;
-					}
-				} catch (error) {
-					console.error('Failed to fetch pasted image URL:', error);
-				}
-			}
-		}
+	onMount(() => {
+		window.addEventListener('paste', handlePaste);
+		window.addEventListener('keydown', handlePasteShortcut);
+		window.addEventListener('keyup', handlePasteKeyUp);
+		window.addEventListener('pointermove', followPointer);
+		window.addEventListener('blur', releasePasteKey);
+		return () => {
+			window.removeEventListener('keyup', handlePasteKeyUp);
+			window.removeEventListener('pointermove', followPointer);
+			window.removeEventListener('blur', releasePasteKey);
+			window.removeEventListener('paste', handlePaste);
+			window.removeEventListener('keydown', handlePasteShortcut);
+		};
 	});
+
 	async function importImages() {
 		endEditing();
 		const files = await pickImageFiles();
@@ -750,6 +931,101 @@
 		elements.push(el);
 		selectedElementId = null;
 		elementDrag = { type: 'create', id: el.id, origin: point };
+	}
+
+	let cloneDrag = $state<{ pointerId: number; startX: number; startY: number } | null>(null);
+	let cloneRect = $state<Rect | null>(null);
+	let cloneBusy = false;
+
+	function clonePoint(point: { x: number; y: number }) {
+		return { x: clamp(point.x, 0, sourceWidth), y: clamp(point.y, 0, sourceHeight) };
+	}
+
+	function handleClonePointerDown(point: { x: number; y: number }, event: PointerEvent) {
+		if (cloneBusy || !baseBitmap) return;
+		endEditing();
+		const start = clonePoint(point);
+		svg?.setPointerCapture(event.pointerId);
+		cloneDrag = { pointerId: event.pointerId, startX: start.x, startY: start.y };
+		cloneRect = { x: start.x, y: start.y, width: 0, height: 0 };
+		selectedElementId = null;
+	}
+
+	function handleCloneMove(point: { x: number; y: number }, event: PointerEvent) {
+		if (!cloneDrag) return;
+		let end = clonePoint(point);
+		if (event.shiftKey) {
+			const dx = end.x - cloneDrag.startX;
+			const dy = end.y - cloneDrag.startY;
+			const size = Math.max(Math.abs(dx), Math.abs(dy));
+			end = clonePoint({
+				x: cloneDrag.startX + Math.sign(dx || 1) * size,
+				y: cloneDrag.startY + Math.sign(dy || 1) * size
+			});
+		}
+		cloneRect = makeRect(cloneDrag.startX, cloneDrag.startY, end.x, end.y);
+		showTooltip({
+			anchor: 'mouse',
+			content: `${Math.round(cloneRect.width)}x${Math.round(cloneRect.height)}`,
+			id: 'clone-dimensions'
+		});
+	}
+
+	function endCloneDrag() {
+		if (cloneDrag) {
+			try {
+				svg?.releasePointerCapture(cloneDrag.pointerId);
+			} catch {}
+		}
+		cloneDrag = null;
+		cloneRect = null;
+		tooltips.hide('clone-dimensions');
+	}
+
+	function cancelClone() {
+		endCloneDrag();
+		if (!cursorOverride) cursor = 'crosshair';
+	}
+
+	async function finishClone() {
+		const rect = cloneRect;
+		endCloneDrag();
+		if (!rect || !baseBitmap || cloneBusy) return;
+
+		const region = snapRegion(
+			{ x1: rect.x, y1: rect.y, x2: rect.x + rect.width, y2: rect.y + rect.height },
+			sourceWidth,
+			sourceHeight
+		);
+		if (!region) return;
+
+		cloneBusy = true;
+		try {
+			const bitmap = await captureRegion(
+				baseBitmap,
+				sourceWidth,
+				sourceHeight,
+				snapshotElements(),
+				region
+			);
+			const el = createImageElementAt(registerImage(bitmap), {
+				x: region.x,
+				y: region.y,
+				width: region.w,
+				height: region.h
+			});
+
+			pushHistory(snapshotElements());
+			elements.push(el);
+			selectedElementId = el.id;
+			activeTool = 'select';
+			if (!cursorOverride) cursor = 'move';
+		} catch (error) {
+			console.error('clone failed', error);
+			flash('Could not clone the area');
+		} finally {
+			cloneBusy = false;
+		}
 	}
 
 	function handleSelectPointerDown(point: { x: number; y: number }, event: PointerEvent) {
@@ -884,6 +1160,11 @@
 			handleTextPointerDown(point);
 			return;
 		}
+
+		if (activeTool === 'clone') {
+			handleClonePointerDown(point, event);
+			return;
+		}
 		if (activeToolDef.createsElement) {
 			handleCreatePointerDown(point, event);
 		}
@@ -1001,6 +1282,12 @@
 			return;
 		}
 
+		if (activeTool === 'clone') {
+			handleCloneMove(point, event);
+			if (!cloneDrag && !cursorOverride) cursor = 'crosshair';
+			return;
+		}
+
 		if (!elementDrag) {
 			if (!cursorOverride) cursor = hoverCursorForTool(point);
 			return;
@@ -1015,7 +1302,8 @@
 					elements[idx],
 					point,
 					modifiersFromEvent(event),
-					drag.origin
+					drag.origin,
+					Number(toolOptions[activeTool]?.minDistance) || 0
 				);
 			return;
 		}
@@ -1067,6 +1355,11 @@
 			}
 
 			if (!cursorOverride) cursor = crop ? hoverCursor(pointerToImage(event)) : 'crosshair';
+			return;
+		}
+
+		if (activeTool === 'clone') {
+			if (cloneDrag) void finishClone();
 			return;
 		}
 
@@ -1146,6 +1439,26 @@
 	let nearBottom = $derived(!!(crop && crop.y + crop.height > sourceHeight - 80));
 
 	let toolbarDiv: HTMLDivElement = $state(null as unknown as HTMLDivElement);
+
+	const topBarInset = 16;
+	let topBarEl = $state<HTMLDivElement>();
+	let topBarOffset = $state({ x: 0, y: 0 });
+	let topBarDragging = $state(false);
+
+	function moveTopBar(dx: number, dy: number) {
+		if (!container || !topBarEl) return;
+		const { clientWidth: cw, clientHeight: ch } = container;
+		const { offsetWidth: bw, offsetHeight: bh } = topBarEl;
+
+		const maxX = Math.max(0, (cw - bw) / 2);
+		const minY = -topBarInset;
+		const maxY = Math.max(minY, ch - bh - topBarInset);
+
+		topBarOffset = {
+			x: clamp(topBarOffset.x + dx, -maxX, maxX),
+			y: clamp(topBarOffset.y + dy, minY, maxY)
+		};
+	}
 
 	function beginEditing(id: string) {
 		if (editingId === id) return;
@@ -1456,6 +1769,32 @@
 			/>
 		{/if}
 
+		{#if cloneRect}
+			<rect
+				x={cloneRect.x}
+				y={cloneRect.y}
+				width={cloneRect.width}
+				height={cloneRect.height}
+				fill="white"
+				fill-opacity="0.08"
+				stroke="white"
+				stroke-width="2"
+				stroke-dasharray="6 4"
+				pointer-events="none"
+			/>
+			<rect
+				x={cloneRect.x}
+				y={cloneRect.y}
+				width={cloneRect.width}
+				height={cloneRect.height}
+				fill="none"
+				stroke="black"
+				stroke-width="1"
+				stroke-dasharray="6 4"
+				pointer-events="none"
+			/>
+		{/if}
+
 		{#if crop && activeTool === 'crop'}
 			{#each handles as handle}
 				{const [x, y] = $derived(handlePosition(handle, crop))}
@@ -1566,11 +1905,34 @@
 		</div>
 	{/if}
 	<div
+		bind:this={topBarEl}
 		class={cn(
-			'absolute top-4 left-1/2 -translate-x-1/2 z-10 transition-opacity',
+			'absolute top-4 left-1/2 z-10',
+			!topBarDragging && 'transition-opacity',
 			elementDrag && 'pointer-events-none opacity-30'
 		)}
+		style="transform: translate(calc(-50% + {topBarOffset.x}px), {topBarOffset.y}px);"
 	>
+		<div
+			class={cn(
+				'absolute left-1/2 -translate-x-1/2 -top-1 z-10 rounded-md flex justify-center items-center outline h-1.5 w-10 bg-foreground',
+				!topBarDragging && 'cursor-grab',
+				topBarDragging && 'cursor-grabbing'
+			)}
+			title="Drag to move"
+		>
+			<DragHandle
+				onMove={({ dpx, dpy }) => moveTopBar(dpx, dpy)}
+				bind:dragging={
+					() => topBarDragging,
+					(v) => {
+						topBarDragging = v;
+						cursorOverride = v;
+						cursor = v ? 'grabbing' : null;
+					}
+				}
+			/>
+		</div>
 		<SaveBar
 			actions={settings.data.saveActions}
 			onaction={runAction}
@@ -1634,18 +1996,61 @@
 			></div>
 			{#each toolOrder as toolId (toolId)}
 				{const def = toolDefinitions[toolId]}
-				<Button
-					variant={activeTool === toolId ? 'default' : 'secondary'}
-					size="icon"
-					class="bg-transparent "
-					disabled={!def.implemented}
-					title={def.label}
-					onclick={() => selectTool(toolId)}
-				>
-					{const Icon = def.icon}
-					<Icon />
-				</Button>
+				<span use:tooltip={{ content: toolTooltip(toolId) }}>
+					<Button
+						variant={activeTool === toolId ? 'default' : 'secondary'}
+						size="icon"
+						class="bg-transparent "
+						disabled={!def.implemented}
+						onclick={() => selectTool(toolId)}
+					>
+						{const Icon = def.icon}
+						<Icon />
+					</Button>
+				</span>
 			{/each}
+			<Separator orientation="vertical" class="mx-1 h-5 self-center" />
+			{#snippet ctrlz()}
+				<Kbd>Ctrl</Kbd>
+				<Kbd>Z</Kbd>
+			{/snippet}
+			<span use:tooltip={['Undo']}>
+				<Button
+					variant="secondary"
+					size="icon"
+					class="bg-transparent"
+					aria-label="Undo"
+					disabled={undoDepth === 0}
+					onclick={undo}
+				>
+					<Undo2 />
+				</Button>
+			</span>
+			<span use:tooltip={['Redo']}>
+				<Button
+					variant="secondary"
+					size="icon"
+					class="bg-transparent"
+					aria-label="Redo"
+					disabled={redoDepth === 0}
+					onclick={redo}
+				>
+					<Redo2 />
+				</Button>
+			</span>
+			<Separator orientation="vertical" class="mx-1 h-5 self-center" />
+			<span use:tooltip={'Layers'}>
+				<Button
+					variant="secondary"
+					size="icon"
+					class={layersOpen ? '' : 'bg-transparent'}
+					aria-label="Layers"
+					aria-pressed={layersOpen}
+					onclick={() => (layersOpen = !layersOpen)}
+				>
+					<Layers />
+				</Button>
+			</span>
 		</div>
 
 		{#if optionFields.length > 0}
@@ -1673,6 +2078,14 @@
 			{/key}
 		{/if}
 	{/if}
+	<LayersPanel
+		elements={layerElements}
+		selectedId={selectedElementId}
+		bind:open={layersOpen}
+		dimmed={!!elementDrag}
+		onselect={selectLayer}
+		onreorder={reorderLayers}
+	/>
 	<SettingsPanel onclose={() => (settingsOpen = false)} open={settingsOpen} />
 </div>
 

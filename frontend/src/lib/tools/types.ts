@@ -5,6 +5,7 @@ export type ToolId =
 	| 'crop'
 	| 'select'
 	| 'pen'
+	| 'highlighter'
 	| 'line'
 	| 'arrow'
 	| 'rect'
@@ -12,7 +13,8 @@ export type ToolId =
 	| 'text'
 	| 'image'
 	| 'blur'
-	| 'pixelate';
+	| 'pixelate'
+	| 'clone';
 
 export type Point = { x: number; y: number };
 export type Rect = { x: number; y: number; width: number; height: number };
@@ -109,6 +111,8 @@ export interface DrawElement extends BaseElement {
 	thickness: number;
 	smoothing: SmoothMode;
 	rotation: number;
+	opacity?: number;
+	highlighter?: boolean;
 }
 
 export interface TextElement extends BaseElement {
@@ -214,11 +218,14 @@ export interface ToolDefinition {
 	id: ToolId;
 	label: string;
 	icon: Component;
+	/** Single key (no modifiers) that activates the tool. Must be unique across tools. */
+	hotkey?: string;
 
 	implemented: boolean;
 	createsElement: boolean;
 	cursor?: string;
 	optionFields?: ToolOptionField[];
+	defaultFields?: ToolOptionField[];
 	defaultOptions?: Record<string, unknown>;
 }
 

@@ -11,6 +11,7 @@
 		type SaveActionId,
 		type SaveActionSetting
 	} from '$lib/settings.svelte';
+	import { tooltip } from '../../tooltip.svelte';
 
 	let {
 		actions,
@@ -36,39 +37,44 @@
 >
 	{#each saves as id (id)}
 		{const Icon = $derived(saveIcons[actions[id].icon])}
-		<Button
-			variant="secondary"
-			title={actionLabel(id, actions)}
-			onclick={() => onaction?.(id)}
-			size={actionSmall(id, actions) ? 'icon' : 'default'}
-		>
-			<Icon />
-			{#if !actionSmall(id, actions)}
-				{actionLabel(id, actions)}
-			{/if}
-		</Button>
+		<span use:tooltip={actionSmall(id, actions) ? [actionLabel(id, actions)] : []}>
+			<Button
+				variant="secondary"
+				onclick={() => onaction?.(id)}
+				size={actionSmall(id, actions) ? 'icon' : 'default'}
+			>
+				<Icon />
+				{#if !actionSmall(id, actions)}
+					{actionLabel(id, actions)}
+				{/if}
+			</Button>
+		</span>
 	{/each}
 	{#if showCancel}
 		{#if saves.length > 0}
 			<Separator orientation="vertical" class="my-2" />
 		{/if}
 		{const Icon = $derived(saveIcons[actions.cancel.icon])}
-		<Button
-			variant="secondary"
-			title={actionLabel('cancel', actions)}
-			onclick={() => onaction?.('cancel')}
-			size={actionSmall('cancel', actions) ? 'icon' : 'default'}
-		>
-			<Icon />
-			{#if !actionSmall('cancel', actions)}
-				{actionLabel('cancel', actions)}
-			{/if}
-		</Button>
+		<span use:tooltip={actionSmall('cancel', actions) ? [actionLabel('cancel', actions)] : []}>
+			<Button
+				variant="secondary"
+				title={actionLabel('cancel', actions)}
+				onclick={() => onaction?.('cancel')}
+				size={actionSmall('cancel', actions) ? 'icon' : 'default'}
+			>
+				<Icon />
+				{#if !actionSmall('cancel', actions)}
+					{actionLabel('cancel', actions)}
+				{/if}
+			</Button>
+		</span>
 	{/if}
 	{#if onsettings}
 		<Separator orientation="vertical" class="my-2" />
-		<Button variant="secondary" size="icon" title="Settings" onclick={onsettings}>
-			<SettingsIcon />
-		</Button>
+		<span use:tooltip={'Settings'}>
+			<Button variant="secondary" size="icon" title="Settings" onclick={onsettings}>
+				<SettingsIcon />
+			</Button>
+		</span>
 	{/if}
 </div>

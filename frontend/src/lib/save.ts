@@ -45,47 +45,44 @@ export async function performSave(
 	{ destination, copy }: SaveMode
 ): Promise<SaveOutcome | null> {
 	if (destination === 'none') {
-		const image = await blob;
-		await copyPng(image);
+		await copyPng(await blob);
 		return { path: null, copied: true };
 	}
 
 	const ask = destination === 'ask';
+	const saveDir = settings.data.saveDir;
 
-	const chosen = ask
-		? DefaultSavePath().then(pickSavePath)
-		: Promise.resolve(settings.data.saveDir);
-
-	const target = await chosen;
-
-	if (ask && !target) {
-		return null;
+	let target = '';
+	if (ask) {
+		target = await DefaultSavePath(saveDir).then(pickSavePath);
+		if (!target) return null;
 	}
 
 	const image = await blob;
 
-	const data = base64ToBytes(await blobToBase64(image));
-
 	const copyPromise = copy
 		? copyPng(image).then(
 				() => true,
-				() => false
+				(err) => {
+					console.error('copy failed', err);
+					return false;
+				}
 			)
 		: Promise.resolve(false);
 
-	const savePromise = ask
-		? SaveImageTo(target, data)
-		: SaveImage(data);
+	const savePromise = blobToBase64(image).then((data) =>
+		ask ? SaveImageTo(target, data) : SaveImage(saveDir, data)
+	);
 
-	const [path, copied] = await Promise.all([
-		savePromise,
+	const [saved, copied] = await Promise.all([
+		savePromise.then(
+			(path) => ({ ok: true as const, path }),
+			(error: unknown) => ({ ok: false as const, error })
+		),
 		copyPromise
 	]);
 
-	return { path, copied };
-}
+	if (!saved.ok) throw saved.error;
 
-function base64ToBytes(base64: string): number[] {
-	const binary = atob(base64);
-	return Array.from(binary, (char) => char.charCodeAt(0));
+	return { path: saved.path, copied };
 }

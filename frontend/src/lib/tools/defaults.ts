@@ -10,6 +10,7 @@ export const DOutlineColor = DColor;
 export const DRad = 0;
 export const DSmooth: SmoothMode = 'none';
 export const DSmoothAmt = 2;
+export const DMinPointDistance = 3;
 export const transgender = 'transparent';
 
 export const DArrowHeadLen = 50;
@@ -29,7 +30,20 @@ export const LineDefault = {
 export const PenDefault = {
 	color: DColor,
 	thickness: DThickness,
-	smoothing: DSmooth as SmoothMode
+	smoothing: DSmooth as SmoothMode,
+	minDistance: DMinPointDistance
+};
+
+export const DHighlightColor = '#ffe600';
+export const DHighlightThickness = 24;
+export const DHighlightOpacity = 40;
+
+export const HighlighterDefault = {
+	color: DHighlightColor,
+	thickness: DHighlightThickness,
+	smoothing: DSmooth as SmoothMode,
+	opacity: DHighlightOpacity,
+	minDistance: DMinPointDistance
 };
 
 export const ArrowDefault = {
@@ -64,7 +78,11 @@ export const PixelateDefault = { size: DPixelSize };
 
 export const ThicknessRaynge = { min: 1, max: 40, step: 1 } as const;
 export const OutlineWidthRaynge = { min: 1, max: 40, step: 1 } as const;
+export const MinPointDistanceRange = { min: 0, max: 30, step: 0.5 } as const;
+export const OpacityRange = { min: 5, max: 100, step: 1 } as const;
 export const RadiusRaynge = { min: 0, max: 200, step: 1 } as const;
+export const ArrowLenRange = { min: 0, max: 500, step: 1 } as const;
+export const ArrowAngleRange = { min: 0, max: 180, step: 1 } as const;
 export const BlurRadRaynge = { min: 2, max: 40, step: 1 } as const;
 export const PixelateSizeRaygne = { min: 2, max: 60, step: 1 } as const;
 
@@ -88,3 +106,4 @@ export const TextDefault = {
 	italic: false
 };
 export const FontSizeRaynge = { min: 8, max: 300, step: 1 } as const;
+8;
