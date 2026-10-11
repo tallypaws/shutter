@@ -1592,9 +1592,9 @@
 
 	const stackOffsetX = 0;
 	const stackOffsetY = 0;
-	const stackShrink = 0.06;
-	const stackFade = 0.06;
-	const stackMinOpacity = 0.35;
+	const stackShrink = 0.00;
+	const stackFade = 0.66;
+	const stackMinOpacity = 0.00;
 	const stackMoveMs = 250;
 	const stackEase = 'cubic-bezier(0.34, 1.4, 0.64, 1)';
 	const stackPlaceDistance = 48;
