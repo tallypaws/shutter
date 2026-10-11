@@ -40,14 +40,29 @@ export function blobToBase64(blob: Blob): Promise<string> {
 		reader.readAsDataURL(blob);
 	});
 }
+
+async function tryCopy(image: Blob): Promise<boolean> {
+	try {
+		await copyPng(image);
+		return true;
+	} catch (err) {
+		console.error('copy failed', err);
+		return false;
+	}
+}
+
 export async function performSave(
 	blob: Promise<Blob>,
 	{ destination, copy }: SaveMode
 ): Promise<SaveOutcome | null> {
+	const image = await blob;
+
 	if (destination === 'none') {
-		await copyPng(await blob);
+		await copyPng(image);
 		return { path: null, copied: true };
 	}
+
+	const copied = copy ? await tryCopy(image) : false;
 
 	const ask = destination === 'ask';
 	const saveDir = settings.data.saveDir;
@@ -58,31 +73,8 @@ export async function performSave(
 		if (!target) return null;
 	}
 
-	const image = await blob;
+	const data = await blobToBase64(image);
+	const path = await (ask ? SaveImageTo(target, data) : SaveImage(saveDir, data));
 
-	const copyPromise = copy
-		? copyPng(image).then(
-				() => true,
-				(err) => {
-					console.error('copy failed', err);
-					return false;
-				}
-			)
-		: Promise.resolve(false);
-
-	const savePromise = blobToBase64(image).then((data) =>
-		ask ? SaveImageTo(target, data) : SaveImage(saveDir, data)
-	);
-
-	const [saved, copied] = await Promise.all([
-		savePromise.then(
-			(path) => ({ ok: true as const, path }),
-			(error: unknown) => ({ ok: false as const, error })
-		),
-		copyPromise
-	]);
-
-	if (!saved.ok) throw saved.error;
-
-	return { path: saved.path, copied };
+	return { path, copied };
 }
