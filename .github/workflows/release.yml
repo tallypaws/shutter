@@ -1,0 +1,191 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AUR_PACKAGE: shutter-editor
+  LINUXDEPLOY_URL: https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage
+  LINUXDEPLOY_SHA256: c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d
+  GTK_PLUGIN_URL: https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh
+  GTK_PLUGIN_SHA256: b0f4cbc684a0103a9651f0955b635eaea0096b3a66c0f5a2c2aa337960375171
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - name: dependencies
+        run: >
+          pacman -Syu --noconfirm --needed
+          git go npm gtk3 webkit2gtk-4.1 librsvg patchelf pacman-contrib
+
+      - uses: actions/checkout@v7
+
+      - name: tag must match VERSION
+        if: github.ref_type == 'tag'
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match VERSION (v$version)"
+            exit 1
+          fi
+
+      - name: pacman package
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          version="$(tr -d '[:space:]' < VERSION)"
+
+          useradd -m builder
+          pkgdir=/home/builder/pkg
+          install -d -o builder -g builder "$pkgdir"
+          cp packaging/aur/PKGBUILD "$pkgdir/PKGBUILD"
+          sed -i "s/^pkgver=.*/pkgver=$version/" "$pkgdir/PKGBUILD"
+          git archive --prefix="shutter-$version/" \
+            -o "$pkgdir/$AUR_PACKAGE-$version.tar.gz" HEAD
+          chown -R builder:builder "$pkgdir"
+
+          su builder -c "cd '$pkgdir' && updpkgsums && makepkg -f --noconfirm"
+
+          mkdir -p dist
+          cp "$pkgdir/$AUR_PACKAGE-$version"-*.pkg.tar.zst dist/
+
+      - name: test
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < VERSION)"
+          mkdir -p "$RUNNER_TEMP/pkgroot"
+          bsdtar -xf dist/"$AUR_PACKAGE-$version"-*.pkg.tar.zst \
+            -C "$RUNNER_TEMP/pkgroot" usr/bin/shutter
+          "$RUNNER_TEMP/pkgroot/usr/bin/shutter" --version | grep -qF "$version"
+
+      - name: AppImage
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < VERSION)"
+          tools="$RUNNER_TEMP/tools"
+          appdir="$PWD/AppDir"
+
+          mkdir -p "$tools"
+          curl -fsSL -o "$tools/linuxdeploy-x86_64.AppImage" "$LINUXDEPLOY_URL"
+          curl -fsSL -o "$tools/linuxdeploy-plugin-gtk.sh" "$GTK_PLUGIN_URL"
+          echo "$LINUXDEPLOY_SHA256  $tools/linuxdeploy-x86_64.AppImage" | sha256sum -c -
+          echo "$GTK_PLUGIN_SHA256  $tools/linuxdeploy-plugin-gtk.sh" | sha256sum -c -
+          chmod +x "$tools"/*
+
+          install -d "$appdir/usr/bin"
+          bsdtar -xOf dist/"$AUR_PACKAGE-$version"-*.pkg.tar.zst usr/bin/shutter \
+            > "$appdir/usr/bin/shutter"
+          chmod 755 "$appdir/usr/bin/shutter"
+          install -Dm644 packaging/linux/shutter.desktop \
+            "$appdir/usr/share/applications/shutter.desktop"
+          install -Dm644 packaging/linux/shutter.png \
+            "$appdir/usr/share/icons/hicolor/512x512/apps/shutter.png"
+
+          export PATH="$tools:$PATH"
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          export DEPLOY_GTK_VERSION=3
+          export ARCH=x86_64
+          export LINUXDEPLOY_OUTPUT_VERSION="$version"
+
+          "$tools/linuxdeploy-x86_64.AppImage" \
+            --appdir "$appdir" \
+            --executable "$appdir/usr/bin/shutter" \
+            --desktop-file "$appdir/usr/share/applications/shutter.desktop" \
+            --icon-file "$appdir/usr/share/icons/hicolor/512x512/apps/shutter.png" \
+            --plugin gtk \
+            --output appimage
+
+          mv Shutter-*.AppImage dist/
+
+      #m
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum -- * > SHA256SUMS
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber -- *
+          else
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+              --verify-tag --generate-notes --title "Shutter ${GITHUB_REF_NAME#v}" -- *
+          fi
+
+  # aur:
+  #   if: github.ref_type == 'tag'
+  #   needs: release
+  #   runs-on: ubuntu-latest
+  #   container: archlinux:base-devel
+  #   steps:
+  #     - name: Install dependencies
+  #       run: pacman -Syu --noconfirm --needed git openssh pacman-contrib
+
+  #     - uses: actions/checkout@v7
+
+  #     #aur is closed rn
+  #     - name: AUR package
+  #       env:
+  #         AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+  #         GIT_NAME: ${{ vars.AUR_GIT_NAME }}
+  #         GIT_EMAIL: ${{ vars.AUR_GIT_EMAIL }}
+  #       run: |
+  #         set -euo pipefail
+  #         : "${AUR_SSH_PRIVATE_KEY:?Add the AUR_SSH_PRIVATE_KEY repository secret}"
+  #         : "${GIT_NAME:?Add the AUR_GIT_NAME repository variable}"
+  #         : "${GIT_EMAIL:?Add the AUR_GIT_EMAIL repository variable}"
+  #         version="$(tr -d '[:space:]' < VERSION)"
+
+  #         install -dm700 "$HOME/.ssh"
+  #         printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > "$HOME/.ssh/aur"
+  #         chmod 600 "$HOME/.ssh/aur"
+  #         ssh-keyscan -t ed25519,rsa aur.archlinux.org >> "$HOME/.ssh/known_hosts"
+  #         export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/aur -o IdentitiesOnly=yes"
+
+  #         git clone "ssh://aur@aur.archlinux.org/$AUR_PACKAGE.git" /tmp/aur
+  #         git -C /tmp/aur checkout -B master
+  #         git -C /tmp/aur config user.name "$GIT_NAME"
+  #         git -C /tmp/aur config user.email "$GIT_EMAIL"
+
+  #         cp packaging/aur/PKGBUILD /tmp/aur/PKGBUILD
+  #         sed -i "s/^pkgver=.*/pkgver=$version/; s/^pkgrel=.*/pkgrel=1/" /tmp/aur/PKGBUILD
+
+  #         useradd -m builder
+  #         install -d -o builder -g builder /tmp/srcdest
+  #         chown -R builder:builder /tmp/aur
+  #         su builder -c "cd /tmp/aur && export SRCDEST=/tmp/srcdest \
+  #           && updpkgsums && makepkg --printsrcinfo > .SRCINFO"
+
+  #         git config --global --add safe.directory /tmp/aur
+  #         git -C /tmp/aur add PKGBUILD .SRCINFO
+  #         if git -C /tmp/aur diff --cached --quiet; then
+  #           echo "AUR package is already up to date"
+  #           exit 0
+  #         fi
+  #         git -C /tmp/aur commit -m "Update to $version"
+  #         git -C /tmp/aur push origin HEAD:master
