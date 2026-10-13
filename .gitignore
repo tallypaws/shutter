@@ -29,3 +29,4 @@ build/ios/xcode/gen/
 build/android/overlay.json
 build/android/gen/
 /frontend/src/lib/wailsjs
+/node_modules
