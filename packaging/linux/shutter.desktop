@@ -8,7 +8,6 @@ Icon=shutter
 Terminal=false
 Categories=Graphics;Utility;
 Actions=Screenshot;
-X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2
 
 [Desktop Action Screenshot]
 Name=Take Screenshot
